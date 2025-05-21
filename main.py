@@ -35,7 +35,28 @@ results = []
 link_set = set()
 driver = webdriver.Firefox(options=options)
 driver.get(url)
-wait = WebDriverWait(driver, 30)
+
+# Introduce  a wait driver to be used with interactable elements
+wait = WebDriverWait(driver, 10)
+# and a shorter wait for data fetching
+#  the reason  for the shorter wait is
+# the fact that some elements are intentionally
+# missing, and I dont want to waste 10 seconds on
+# each of them, It is a fine balance and as of now
+# I think 1sec works fine
+wait2 = WebDriverWait(driver, 1)
+
+
+# define a function to use with elements containing data
+def safe_find_elem(by, value):
+    try:
+        elem = wait2.until(EC.presence_of_element_located((by, value)))
+        return elem.text.strip()
+    except:
+        return None
+
+
+# Find Cookie Allow Button
 cookie_allow_btn = wait.until(
     EC.element_to_be_clickable(
         (
@@ -44,7 +65,9 @@ cookie_allow_btn = wait.until(
         )
     )
 )
+# Click Allow Button
 cookie_allow_btn.click()
+# Locate the main page Search button and click on it(move to the search page)
 search_page = wait.until(
     EC.element_to_be_clickable(
         (
@@ -54,97 +77,98 @@ search_page = wait.until(
     )
 )
 search_page.click()
+# Loop through all different searches
 for job_role in ("Data", "Python", "IT", "Software"):
+    # Locate search box, clear it, and send it  the search string
     search_box = wait.until(
         EC.element_to_be_clickable((By.XPATH, '//*[@id="rc_select_2"]'))
     )
     search_box.clear()
     search_box.send_keys(job_role + Keys.RETURN)
+    # Page-Looper
     while True:
-        job_list = wait.until(
-            EC.visibility_of_element_located(
-                (By.CLASS_NAME, "Jobs_resultsContainer__xwjB_")
+        # Find all job ads in the current page
+        ad_links = wait.until(
+            EC.visibility_of_all_elements_located(
+                (By.CSS_SELECTOR, ".h5.BaseJobCard_jobTitle__ehsas")
             )
         )
-        job_listings = job_list.find_elements(
-            By.CLASS_NAME, "BaseJobCard_jobTitleContainer__gfcyi"
-        )
-        for job_listing in job_listings:
-            ad_link = job_listing.find_element(By.TAG_NAME, "a")
+        # Loop through all job ads in the current page
+        for ad_link in ad_links:
+            ad_link = wait.until(EC.element_to_be_clickable(ad_link))
             ad_link_text = ad_link.get_property("href")
             if ad_link_text in link_set:
                 continue
             else:
                 link_set.add(ad_link_text)
             ad_link.click()
+
             logger.info(f"fetching {ad_link_text}")
             driver.switch_to.window(driver.window_handles[-1])
-            basic_info = wait.until(
-                EC.visibility_of_element_located(
-                    (
-                        By.XPATH,
-                        "/html/body/div[1]/div/div[2]/div/main",
-                    )
-                )
-            )
-            role = basic_info.find_element(
+            role = safe_find_elem(
                 By.CSS_SELECTOR, ".h4.JobTitle_title__irhyN"
-            ).text
-            try:
-                company = basic_info.find_element(
-                    By.CSS_SELECTOR,
-                    ".h6.JobCompanyName_name__V9AaS ",
-                ).text
-            except:
-                company = None
-            sleep(0.5)
-            location = basic_info.find_element(
+            )
+
+            company = safe_find_elem(
+                By.CSS_SELECTOR,
+                ".h6.JobCompanyName_name__V9AaS ",
+            )
+
+            location = safe_find_elem(
                 By.CSS_SELECTOR,
                 ".JobDetail_value__1yhn_.main-body-text",
-            ).text
-            date_posted = basic_info.find_element(
+            )
+            date_posted = safe_find_elem(
                 By.CSS_SELECTOR,
                 "div.JobDetail_detail___Th__:nth-child(2) > div:nth-child(2)",
-            ).text
-            try:
-                min_experience = basic_info.find_element(
-                    By.CSS_SELECTOR,
-                    "div.JobDetail_detail___Th__:nth-child(3) > a:nth-child(2)",
-                ).text
-            except:
-                min_experience = None
-            employment_type = basic_info.find_element(
+            )
+
+            min_experience = safe_find_elem(
+                By.CSS_SELECTOR,
+                "div.JobDetail_detail___Th__:nth-child(3) > a:nth-child(2)",
+            )
+
+            employment_type = safe_find_elem(
                 By.CSS_SELECTOR,
                 "div.JobDetail_detail___Th__:nth-child(4) > a:nth-child(2)",
-            ).text
-            category = basic_info.find_element(
+            )
+            category = safe_find_elem(
                 By.CSS_SELECTOR,
                 ".JobDetails_singleDoubleColumn__NwW1V > div:nth-child(1) > a:nth-child(2)",
-            ).text
-            try:
-                remote = basic_info.find_element(
-                    By.CSS_SELECTOR,
-                    ".JobDetails_singleDoubleColumn__NwW1V > div:nth-child(2) > a:nth-child(2)",
-                ).text
-            except:
-                remote = None
-            details = []
-            contents_prt = driver.find_element(
-                By.CLASS_NAME, "HtmlRenderer_renderer__mr82C"
             )
-            for contents_chd in contents_prt.find_elements(
-                By.XPATH, ".//p | .//strong | .//li"
-            ):
-                if contents_chd.text.strip() != "":
-                    details.append(contents_chd.text.strip())
+
+            remote = safe_find_elem(
+                By.CSS_SELECTOR,
+                ".JobDetails_singleDoubleColumn__NwW1V > div:nth-child(2) > a:nth-child(2)",
+            )
+
+            details = []
             try:
-                tags = basic_info.find_elements(
-                    By.CSS_SELECTOR,
-                    '[class*="Label_label__Llv6_"]',
+                contents_prt = wait2.until(
+                    EC.visibility_of_element_located(
+                        (By.CLASS_NAME, "HtmlRenderer_renderer__mr82C")
+                    )
+                )
+            except:
+                contents_prt = None
+            if contents_prt:
+                for contents_chd in contents_prt.find_elements(
+                    By.XPATH, ".//p | .//strong | .//li"
+                ):
+                    if contents_chd.text.strip() != "":
+                        details.append(contents_chd.text.strip())
+            try:
+                tags = wait2.until(
+                    EC.visibility_of_all_elements_located(
+                        (
+                            By.CSS_SELECTOR,
+                            '[class*="Label_label__Llv6_"]',
+                        )
+                    )
                 )
                 tags = [tag.text for tag in tags]
             except:
-                tags = None
+                tags = []
 
             driver.close()
             driver.switch_to.window(driver.window_handles[-1])
