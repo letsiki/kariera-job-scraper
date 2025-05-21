@@ -175,7 +175,7 @@ for job_role in ("Data", "Python", "IT", "Software"):
             button.click()
         else:
             break
-
+driver.quit()
 
 df = pd.DataFrame(results)
 
