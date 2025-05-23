@@ -37,27 +37,30 @@ driver = webdriver.Firefox(options=options)
 driver.get(url)
 
 # Introduce  a wait driver to be used with interactable elements
-wait = WebDriverWait(driver, 10)
+long_wait = WebDriverWait(driver, 15)
 # and a shorter wait for data fetching
 #  the reason  for the shorter wait is
 # the fact that some elements are intentionally
 # missing, and I dont want to waste 10 seconds on
 # each of them, It is a fine balance and as of now
 # I think 1sec works fine
-wait2 = WebDriverWait(driver, 1)
+short_wait = WebDriverWait(driver, 0.5)
 
 
-# define a function to use with elements containing data
-def safe_find_elem(by, value):
+# define a function to use with elements containing text data
+def safe_find_text_elem(by, value):
     try:
-        elem = wait2.until(EC.presence_of_element_located((by, value)))
+        elem = short_wait.until(
+            EC.presence_of_element_located((by, value))
+        )
         return elem.text.strip()
     except:
+        logger.info("value not found")
         return None
 
 
 # Find Cookie Allow Button
-cookie_allow_btn = wait.until(
+cookie_allow_btn = long_wait.until(
     EC.element_to_be_clickable(
         (
             By.CSS_SELECTOR,
@@ -68,7 +71,7 @@ cookie_allow_btn = wait.until(
 # Click Allow Button
 cookie_allow_btn.click()
 # Locate the main page Search button and click on it(move to the search page)
-search_page = wait.until(
+search_page = long_wait.until(
     EC.element_to_be_clickable(
         (
             By.XPATH,
@@ -78,9 +81,9 @@ search_page = wait.until(
 )
 search_page.click()
 # Loop through all different searches
-for job_role in ("Data", "Python", "IT", "Software"):
+for job_role in ("Data", "Python", "IT", "Software", "Developer"):
     # Locate search box, clear it, and send it  the search string
-    search_box = wait.until(
+    search_box = long_wait.until(
         EC.element_to_be_clickable((By.XPATH, '//*[@id="rc_select_2"]'))
     )
     search_box.clear()
@@ -88,14 +91,16 @@ for job_role in ("Data", "Python", "IT", "Software"):
     # Page-Looper
     while True:
         # Find all job ads in the current page
-        ad_links = wait.until(
+        ad_links = long_wait.until(
             EC.visibility_of_all_elements_located(
                 (By.CSS_SELECTOR, ".h5.BaseJobCard_jobTitle__ehsas")
             )
         )
         # Loop through all job ads in the current page
         for ad_link in ad_links:
-            ad_link = wait.until(EC.element_to_be_clickable(ad_link))
+            ad_link = long_wait.until(
+                EC.element_to_be_clickable(ad_link)
+            )
             ad_link_text = ad_link.get_property("href")
             if ad_link_text in link_set:
                 continue
@@ -105,46 +110,53 @@ for job_role in ("Data", "Python", "IT", "Software"):
 
             logger.info(f"fetching {ad_link_text}")
             driver.switch_to.window(driver.window_handles[-1])
-            role = safe_find_elem(
-                By.CSS_SELECTOR, ".h4.JobTitle_title__irhyN"
-            )
+            # find mandatory element(use wait instead of wait2), may turn this into a function
+            try:
+                role = long_wait.until(
+                    EC.presence_of_element_located(
+                        (By.CSS_SELECTOR, ".h4.JobTitle_title__irhyN")
+                    )
+                ).text.strip()
+            except:
+                logger.error(f"{ad_link_text} did not fetch role")
+                raise
 
-            company = safe_find_elem(
+            company = safe_find_text_elem(
                 By.CSS_SELECTOR,
                 ".h6.JobCompanyName_name__V9AaS ",
             )
 
-            location = safe_find_elem(
+            location = safe_find_text_elem(
                 By.CSS_SELECTOR,
                 ".JobDetail_value__1yhn_.main-body-text",
             )
-            date_posted = safe_find_elem(
+            date_posted = safe_find_text_elem(
                 By.CSS_SELECTOR,
                 "div.JobDetail_detail___Th__:nth-child(2) > div:nth-child(2)",
             )
 
-            min_experience = safe_find_elem(
+            min_experience = safe_find_text_elem(
                 By.CSS_SELECTOR,
                 "div.JobDetail_detail___Th__:nth-child(3) > a:nth-child(2)",
             )
 
-            employment_type = safe_find_elem(
+            employment_type = safe_find_text_elem(
                 By.CSS_SELECTOR,
                 "div.JobDetail_detail___Th__:nth-child(4) > a:nth-child(2)",
             )
-            category = safe_find_elem(
+            category = safe_find_text_elem(
                 By.CSS_SELECTOR,
                 ".JobDetails_singleDoubleColumn__NwW1V > div:nth-child(1) > a:nth-child(2)",
             )
 
-            remote = safe_find_elem(
+            remote = safe_find_text_elem(
                 By.CSS_SELECTOR,
                 ".JobDetails_singleDoubleColumn__NwW1V > div:nth-child(2) > a:nth-child(2)",
             )
 
             details = []
             try:
-                contents_prt = wait2.until(
+                contents_prt = short_wait.until(
                     EC.visibility_of_element_located(
                         (By.CLASS_NAME, "HtmlRenderer_renderer__mr82C")
                     )
@@ -158,7 +170,7 @@ for job_role in ("Data", "Python", "IT", "Software"):
                     if contents_chd.text.strip() != "":
                         details.append(contents_chd.text.strip())
             try:
-                tags = wait2.until(
+                tags = short_wait.until(
                     EC.visibility_of_all_elements_located(
                         (
                             By.CSS_SELECTOR,
@@ -187,7 +199,7 @@ for job_role in ("Data", "Python", "IT", "Software"):
                     "ad_link": ad_link_text,
                 }
             )
-        button = wait.until(
+        button = long_wait.until(
             EC.visibility_of_element_located(
                 (
                     By.CSS_SELECTOR,
