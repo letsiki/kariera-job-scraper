@@ -226,6 +226,6 @@ logger.info(
 )
 
 # filter and save again
-filter_(df)
+df = filter_(df)
 df.to_pickle(f"data/{date}-filtered-df.pkl")
 df.to_csv(f"data/{date}-filtered.csv", index=False)

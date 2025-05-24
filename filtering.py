@@ -73,7 +73,7 @@ excluded_role_patterns = (
 excluded_role_pattern = "|".join(excluded_role_patterns)
 
 
-def filter_(df: pd.DataFrame):
+def filter_(df: pd.DataFrame) -> pd.DataFrame:
     df = df[~df["category"].isin(excluded_categories)]
     df = df[~df["min_experience"].isin(excluded_min_experience)]
     df = df[
@@ -84,7 +84,7 @@ def filter_(df: pd.DataFrame):
 
     df["role"] = df["role"].astype("string")
 
-    df[
+    df = df[
         (
             (df["role"].str.lower().str.contains("data"))
             & (~df["role"].str.lower().str.contains("scientist"))
@@ -92,3 +92,5 @@ def filter_(df: pd.DataFrame):
         )
         | (df["role"].str.lower().str.contains("python"))
     ]
+
+    return df
