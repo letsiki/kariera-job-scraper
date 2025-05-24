@@ -10,6 +10,7 @@ from logging_setup import logging_setup
 import pandas as pd
 from datetime import datetime
 from time import perf_counter
+from filtering import filter_
 
 date = datetime.strftime(datetime.now(), "%Y-%m-%d")
 
@@ -223,3 +224,8 @@ logger.info(f"fetched {len(df)} job ads")
 logger.info(
     f"operation completed in {int((perf_counter() - start) // 60)}  minutes and {round((perf_counter() - start) % 60)} seconds"
 )
+
+# filter and save again
+filter_(df)
+df.to_pickle(f"data/{date}-filtered-df.pkl")
+df.to_csv(f"data/{date}-filtered.csv", index=False)
