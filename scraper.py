@@ -102,7 +102,7 @@ def scrape(debug=False) -> list[dict]:
             )
             # get one job ad per page if debug mode is on
             if debug:
-                ad_links = ad_links[:1]
+                ad_links = ad_links[:5]
             # Loop through all job ads in the current page
             for ad_link in ad_links:
                 ad_link = long_wait.until(

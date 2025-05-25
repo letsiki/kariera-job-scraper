@@ -31,6 +31,15 @@ def main():
         index=False,
     )
 
+    links = [link for link in df["ad_link"]]
+    roles = [role for role in df["role"]]
+    with open(
+        f"data/daily-urls/{'debug-' if args.debug else ''}daily-urls.md",
+        "w",
+    ) as f:
+        for role, link in zip(roles, links):
+            f.write(f"[{role}]({link})")
+
 
 if __name__ == "__main__":
     main()
