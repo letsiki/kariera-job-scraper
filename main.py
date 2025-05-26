@@ -38,7 +38,7 @@ def main():
         "w",
     ) as f:
         for role, link in zip(roles, links):
-            f.write(f"[{role}]({link})")
+            f.write(f"[{role}]({link})\n")
 
 
 if __name__ == "__main__":

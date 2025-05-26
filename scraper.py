@@ -8,13 +8,17 @@ import logging
 from logging_setup import logging_setup
 from time import perf_counter
 from datetime import datetime
+from selenium.common.exceptions import TimeoutException
 
 
 def scrape(debug=False) -> list[dict]:
     date = datetime.strftime(datetime.now(), "%Y-%m-%d")
     logger = logging.Logger(__name__)
     logging_setup(
-        logger, mode="fc", filename=f"log/{'debug' if debug else date}.log", filemode="w"
+        logger,
+        mode="fc",
+        filename=f"log/{'debug' if debug else date}.log",
+        filemode="w",
     )
 
     start = perf_counter()
@@ -62,14 +66,17 @@ def scrape(debug=False) -> list[dict]:
             return None
 
     # Find Cookie Allow Button
-    cookie_allow_btn = long_wait.until(
-        EC.element_to_be_clickable(
-            (
-                By.CSS_SELECTOR,
-                "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",
+    try:
+        cookie_allow_btn = long_wait.until(
+            EC.element_to_be_clickable(
+                (
+                    By.CSS_SELECTOR,
+                    "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",
+                )
             )
         )
-    )
+    except TimeoutException:
+        return scrape(debug=debug)
     # Click Allow Button
     cookie_allow_btn.click()
     # Locate the main page Search button and click on it(move to the search page)
@@ -85,29 +92,42 @@ def scrape(debug=False) -> list[dict]:
     # Loop through all different searches
     for job_role in ("Data", "Python", "IT", "Software", "Developer"):
         # Locate search box, clear it, and send it  the search string
-        search_box = long_wait.until(
-            EC.element_to_be_clickable(
-                (By.XPATH, '//*[@id="rc_select_2"]')
+        try:
+            search_box = long_wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, '//*[@id="rc_select_2"]')
+                )
             )
-        )
+        except TimeoutException:
+            return scrape(debug=debug)
         search_box.clear()
         search_box.send_keys(job_role + Keys.RETURN)
         # Page-Looper
         while True:
+
             # Find all job ads in the current page
-            ad_links = long_wait.until(
-                EC.visibility_of_all_elements_located(
-                    (By.CSS_SELECTOR, ".h5.BaseJobCard_jobTitle__ehsas")
+            try:
+                ad_links = long_wait.until(
+                    EC.visibility_of_all_elements_located(
+                        (
+                            By.CSS_SELECTOR,
+                            ".h5.BaseJobCard_jobTitle__ehsas",
+                        )
+                    )
                 )
-            )
+            except TimeoutException:
+                return scrape(debug=debug)
             # get one job ad per page if debug mode is on
             if debug:
                 ad_links = ad_links[:5]
             # Loop through all job ads in the current page
             for ad_link in ad_links:
-                ad_link = long_wait.until(
-                    EC.element_to_be_clickable(ad_link)
-                )
+                try:
+                    ad_link = long_wait.until(
+                        EC.element_to_be_clickable(ad_link)
+                    )
+                except TimeoutException:
+                    return scrape(debug=debug)
                 ad_link_text = ad_link.get_property("href")
                 if ad_link_text in link_set:
                     continue
@@ -128,8 +148,10 @@ def scrape(debug=False) -> list[dict]:
                         )
                     ).text.strip()
                 except:
-                    logger.error(f"{ad_link_text} did not fetch role")
-                    raise
+                    logger.error(
+                        f"{ad_link_text} did not fetch role restarting"
+                    )
+                    return scrape(debug=debug)
 
                 company = _safe_find_text_elem(
                     By.CSS_SELECTOR,
