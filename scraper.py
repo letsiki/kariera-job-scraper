@@ -8,10 +8,13 @@ import logging
 from logging_setup import logging_setup
 from time import perf_counter
 from datetime import datetime
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import (
+    TimeoutException,
+    ElementNotInteractableException,
+)
 
 
-def scrape(debug=False) -> list[dict]:
+def scrape(debug=False, retries=0) -> list[dict]:
     date = datetime.strftime(datetime.now(), "%Y-%m-%d")
     logger = logging.Logger(__name__)
     logging_setup(
@@ -75,10 +78,15 @@ def scrape(debug=False) -> list[dict]:
                 )
             )
         )
-    except TimeoutException:
-        return scrape(debug=debug)
+    except TimeoutException as e:
+        logger.error(f"{e}\nrestarting scraper")
+        return scrape(debug=debug, retries=retries + 1)
     # Click Allow Button
-    cookie_allow_btn.click()
+    try:
+        cookie_allow_btn.click()
+    except ElementNotInteractableException as e:
+        logger.error(f"{e}\nrestarting scraper")
+        return scrape(debug=debug, retries=retries + 1)
     # Locate the main page Search button and click on it(move to the search page)
     search_page = long_wait.until(
         EC.element_to_be_clickable(
@@ -98,8 +106,9 @@ def scrape(debug=False) -> list[dict]:
                     (By.XPATH, '//*[@id="rc_select_2"]')
                 )
             )
-        except TimeoutException:
-            return scrape(debug=debug)
+        except TimeoutException as e:
+            logger.error(f"{e}\nrestarting scraper")
+            return scrape(debug=debug, retries=retries + 1)
         search_box.clear()
         search_box.send_keys(job_role + Keys.RETURN)
         # Page-Looper
@@ -115,8 +124,9 @@ def scrape(debug=False) -> list[dict]:
                         )
                     )
                 )
-            except TimeoutException:
-                return scrape(debug=debug)
+            except TimeoutException as e:
+                logger.error(f"{e}\nrestarting scraper")
+                return scrape(debug=debug, retries=retries + 1)
             # get one job ad per page if debug mode is on
             if debug:
                 ad_links = ad_links[:5]
@@ -126,8 +136,9 @@ def scrape(debug=False) -> list[dict]:
                     ad_link = long_wait.until(
                         EC.element_to_be_clickable(ad_link)
                     )
-                except TimeoutException:
-                    return scrape(debug=debug)
+                except TimeoutException as e:
+                    logger.error(f"{e}restarting scraper")
+                    return scrape(debug=debug, retries=retries + 1)
                 ad_link_text = ad_link.get_property("href")
                 if ad_link_text in link_set:
                     continue
@@ -147,11 +158,9 @@ def scrape(debug=False) -> list[dict]:
                             )
                         )
                     ).text.strip()
-                except:
-                    logger.error(
-                        f"{ad_link_text} did not fetch role restarting"
-                    )
-                    return scrape(debug=debug)
+                except TimeoutException as e:
+                    logger.error(f"{e}did not fetch role restarting")
+                    return scrape(debug=debug, retries=retries + 1)
 
                 company = _safe_find_text_elem(
                     By.CSS_SELECTOR,
@@ -250,7 +259,7 @@ def scrape(debug=False) -> list[dict]:
 
     logger.info(f"fetched {len(results)} job ads")
     logger.info(
-        f"operation completed in {int((perf_counter() - start) // 60)}  minutes and {round((perf_counter() - start) % 60)} seconds"
+        f"operation completed in {int((perf_counter() - start) // 60)}  minutes and {round((perf_counter() - start) % 60)} seconds ({retries} retries)."
     )
 
     return results
