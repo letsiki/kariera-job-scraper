@@ -12,9 +12,22 @@ from selenium.common.exceptions import (
     TimeoutException,
     ElementNotInteractableException,
 )
+import time
+
+RETRY_WAIT = 60  # baseline time to wait (in seconds)
+MAX_RETRIES = 5  # times to retry
+
+# Generator for exponential backoff retry intervals
+retry_generator = (RETRY_WAIT * 2**i for i in range(MAX_RETRIES))
 
 
 def scrape(debug=False, retries=0) -> list[dict]:
+    if retries > MAX_RETRIES:
+        raise TimeoutException(
+            f"Max retries ({MAX_RETRIES}) reached, exiting"
+        )
+    if retries != 0:
+        time.sleep(next(retry_generator))
     date = datetime.strftime(datetime.now(), "%Y-%m-%d")
     logger = logging.Logger(__name__)
     logging_setup(
