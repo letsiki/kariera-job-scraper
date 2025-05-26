@@ -33,6 +33,7 @@ def main():
 
     links = [link for link in df["ad_link"]]
     roles = [role for role in df["role"]]
+    companies = [company for company in df["company"]]
 
     with open(
         f"data/daily-urls/{'debug-' if args.debug else ''}daily-urls.md",
@@ -45,8 +46,10 @@ def main():
         "w",
     ) as f:
         f.write(f"#### {date}\n")
-        for role, link in zip(roles, links):
-            f.write(f"[{role}]({link})  \n")
+        for role, link, company in zip(roles, links, companies):
+            f.write(
+                f"[{role}{' - ' if company else ''}{company}]({link})  \n"
+            )
         f.write(f"  \n{original}")
 
 
