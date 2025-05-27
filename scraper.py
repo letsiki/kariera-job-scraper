@@ -153,7 +153,11 @@ def scrape(debug=False, retries=0) -> list[dict]:
                     logger.error(f"{e}restarting scraper")
                     return scrape(debug=debug, retries=retries + 1)
                 ad_link_text = ad_link.get_property("href")
-                if ad_link_text in link_set:
+                # filter out existing links and sponsored links (they are duplicates)
+                if (
+                    ad_link_text in link_set
+                    or "sponsored" in ad_link_text
+                ):
                     continue
                 else:
                     link_set.add(ad_link_text)
