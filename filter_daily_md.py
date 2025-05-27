@@ -36,6 +36,6 @@ def _get_dates(sections):
 
 def _map_is_unique_day(dates):
     unique_dates = [True]
-    for i in range(1, len(dates) - 1):
+    for i in range(1, len(dates)):
         unique_dates.append(dates[i] != dates[i - 1])
     return unique_dates
