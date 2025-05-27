@@ -3,6 +3,7 @@ from datetime import datetime
 from scraper import scrape
 from filtering import filter_
 import argparse
+from filter_daily_md import filter_daily_md
 
 
 def main():
@@ -51,6 +52,9 @@ def main():
                 f"[{role}{' - ' if company else ''}{company}]({link})  \n"
             )
         f.write(f"  \n{original}")
+
+    if not args.debug:
+        filter_daily_md()
 
 
 if __name__ == "__main__":
