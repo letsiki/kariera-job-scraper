@@ -36,12 +36,18 @@ def main():
     roles = [role for role in df["role"]]
     companies = [company for company in df["company"]]
     locations = [location for location in df["location"]]
-
-    with open(
-        f"data/daily-urls/{'debug-' if args.debug else ''}daily-urls.md",
-        "r",
-    ) as f:
-        original = f.read()
+    try:
+        with open(
+            f"data/daily-urls/{'debug-' if args.debug else ''}daily-urls.md",
+            "r",
+        ) as f:
+            original = f.read()
+    except FileNotFoundError:
+        with open(
+            f"data/daily-urls/{'debug-' if args.debug else ''}daily-urls.md",
+            "w+",
+        ) as f:
+            original = f.read()
 
     with open(
         f"data/daily-urls/{'debug-' if args.debug else ''}daily-urls.md",
