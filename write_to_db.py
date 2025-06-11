@@ -1,100 +1,193 @@
-import psycopg2
 import logging
 from logger import configure_logging
 import os
-import time
+from datetime import datetime
+from sqlalchemy.engine import Engine
+from sqlalchemy import create_engine, text
+from job_ad import JobAd
+from pathlib import Path
+from filtering import filter_
+import pandas as pd
+from logging_setup import logging_setup
 
-# dbname is kariera_gr
-
-
-configure_logging()
-logger = logging.getLogger(__name__ + ".py")
+logger = logging.Logger(__name__)
+date = datetime.strftime(datetime.now(), "%Y-%m-%d")
+logging_setup(
+    logger,
+    mode="fc",
+    filename=f"log/{date}.log",
+    filemode="w",
+)
 
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "Password21!!!")
+POSTGRES_DB = "kariera_gr"
+POSTGRES_TABLE = "job_ads"
 
 
-def wait_for_pg_to_be_ready():
-    while True:
-        try:
-            conn = psycopg2.connect(
-                host=POSTGRES_HOST,
-                port=5432,
-                dbname="postgres",
-                user=POSTGRES_USER,
-                password=POSTGRES_PASSWORD,
+class DBWriter:
+    def __init__(self, scraped_jobs: set[JobAd]):
+        self._engine: Engine = create_engine(
+            f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}/{POSTGRES_DB}"
+        )
+        self._scraped_jobs = scraped_jobs
+
+    def _get_last_update_from_db(self) -> datetime | None:
+
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                text(f"SELECT MAX(date_updated) FROM {POSTGRES_TABLE}"),
             )
-            conn.close()
-            logger.info("Postgres is ready!")
-            break
-        except psycopg2.OperationalError:
-            logger.info("Waiting for Postgres...")
-            time.sleep(2)
+            return result.scalar()
 
+    def insert_job_ads(self):
+        last_update = self._get_last_update_from_db()
+        try:
+            most_recent_ad = max(self._scraped_jobs).date_posted
+        except ValueError as e:
+            logger.info("Couldn't return data, e")
+        with self._engine.begin() as conn:
+            if last_update is None:
+                for job_ad in self._scraped_jobs:
+                    param_dict = dict(
+                        **job_ad.model_dump(),
+                    )
+                    param_dict["date_updated"] = most_recent_ad
+                    conn.execute(
+                        text(
+                            f"""
+                            INSERT INTO {POSTGRES_TABLE} (
+                                role, company, location, min_experience, employment_type, category, remote, details, tags, ad_link, date_posted, date_updated
+                            )
+                            VALUES (
+                                :role, :company, :location, :min_experience, :employment_type, :category, :remote, :details, :tags, :ad_link, :date_posted, :date_updated
+                            )
+                        """
+                        ),
+                        param_dict,  # This converts the Pydantic model to a dict {id: ..., name: ..., email: ...}
+                    )
+            else:
+                filtered_scraped_jobs = set(
+                    filter(
+                        lambda job_ad: job_ad.date_posted > last_update,
+                        self._scraped_jobs,
+                    )
+                )
+                for job_ad in filtered_scraped_jobs:
+                    param_dict = dict(
+                        **job_ad.model_dump(),
+                    )
+                    param_dict["date_updated"] = most_recent_ad
+                    # possible conflict on job ad renewals. If that
+                    # is the case update all fields, and set report
+                    # to False
+                    conn.execute(
+                        text(
+                            f"""
+                            INSERT INTO {POSTGRES_TABLE} (
+                                role, company, location, min_experience, employment_type, category, remote, details, tags, ad_link, date_posted, date_updated
+                            )
+                            VALUES (
+                                :role, :company, :location, :min_experience, :employment_type, :category, :remote, :details, :tags, :ad_link, :date_posted, :date_updated
+                            )
+                            ON CONFLICT (ad_link) DO UPDATE SET
+                                role = EXCLUDED.role,
+                                company = EXCLUDED.company,
+                                location = EXCLUDED.location,
+                                min_experiene = EXCLUDED.min_experiene,
+                                employment_type = EXCLUDED.employment_type,
+                                category = EXCLUDED.category,
+                                remote = EXCLUDED.remote,
+                                details = EXCLUDED.details,
+                                tags = EXCLUDED.tags,
+                                date_posted = EXCLUDED.date_posted,
+                                date_updated = EXCLUDED.date_updated
+                                report = FALSE
+                            """
+                        ),
+                        param_dict,
+                    )
 
-from sqlalchemy import (
-    create_engine,
-    Table,
-    Column,
-    MetaData,
-    Integer,
-    TIMESTAMP,
-    insert,
-    text,
-)
+    def to_markdown(
+        self,
+        filtered_only: bool,
+        du_md_filename="data/daily-urls/daily-urls.md",
+    ):
+        def _prepend_daily_report(daily_report: str):
+            """Inserts daily segment in to the overall"""
+            with open(du_md_filename, "r") as f:
+                original = f.read()
+            with open(du_md_filename, "w") as f:
+                f.write(daily_report + "  \n" + original)
 
-# code to retrieve last day and save to list of dicts
-engine = create_engine("postgresql://user:pass@localhost/dbname")
+        # check if daily report file exists - create it
+        if not os.path.exists(du_md_filename):
+            logger.info("Markdown file Not Found")
+            logger.info("Creating it...")
+            p = Path(du_md_filename)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.touch()
 
-with engine.connect() as conn:
-    result = conn.execute(
-        text("SELECT id, my_int_column FROM my_table")
-    )
-    rows = result.fetchall()
+        # retrieve entries that have not been reported yet as a list of dicts
+        results = self._retrieve_unreported()
+        results_df = pd.DataFrame(results)
+        # potentially filter the retrieved results
+        if filtered_only:
+            results_df = filter_(results_df)
 
-# Save as list of dicts
-dict_rows = [dict(row._mapping) for row in rows]
+        # Each segment in the markdown, will start with the report date (today)
+        # It will be followed by the entries we get to report today
+        # date_posted and date_created do not matter here.
+        daily_report = self._create_daily_segment(results_df)
 
-# write code to check for duplicates
-# ... (dict now vs dict yesterday)
-# update days_old on existing entries (+1) and insert new timestamp
-# return dict to insert
+        # Prepend result to daily report
+        _prepend_daily_report(daily_report)
 
-engine = create_engine("postgresql://user:pass@localhost/dbname")
+        # set all unreported entries, to reported in the database
+        self._set_all_unreported_to_reported()
 
+    def _retrieve_unreported(self) -> list[dict]:
+        with self._engine.connect() as conn:
+            return (
+                conn.execute(
+                    text(
+                        f"SELECT * FROM {POSTGRES_TABLE} WHERE report = FALSE"
+                    ),
+                )
+                .mappings()
+                .all()
+            )  # type: ignore
 
-# Receive [dict] to be inserted and insert
-# Insert many rows
-rows = [
-    {"my_int_column": 10},
-    {"my_int_column": 20},
-    {"my_int_column": 30},
-]
+    def _set_all_unreported_to_reported(self):
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    f"""
+                UPDATE {POSTGRES_TABLE}
+                SET report = TRUE
+                WHERE report = FALSE;
+                    """
+                ),
+            )
 
-with engine.connect() as conn:
-    result = conn.execute(
-        text("INsert rows")
-    )
-    conn.commit()
-"""
-INSERT INTO my_table (my_int_column, my_timestamp_column)
-VALUES (42, DEFAULT);
-"""
+    @staticmethod
+    def _create_daily_segment(df: pd.DataFrame) -> str:
+        """
+        Turns daily to-be-reported job-ads into a string segment,
+        that includes current date as a header.
 
-"""
-INSERT INTO my_table (my_int_column, my_timestamp_column)
-VALUES
-    (10, DEFAULT),
-    (20, DEFAULT),
-    (30, DEFAULT);
+        Dependencies:
+            Validates job ads by inserting them into a JobAd object,
+            and takes advantage of the JobAd __str__ method.
+        """
+        job_ad_strings = sorted([(JobAd(**job_ad)) for job_ad in df.to_dict(orient="records")], reverse=True)  # type: ignore
 
-"""
-
-"""
-select * 
-from alex
-    where john
-    group by
-        
-"""
+        contents = (
+            "  \n".join(map(str, job_ad_strings))
+            if len(job_ad_strings) != 0
+            else "Nothing new to show."
+        )
+        return (
+            f"#### {datetime.now().strftime('%Y-%m-%d')}\n" + contents
+        )

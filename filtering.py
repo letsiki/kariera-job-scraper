@@ -55,7 +55,7 @@ excluded_role_patterns = (
     r"logistic",
     r"sales",
     r"data[- ]entry",
-    r"hr",
+    r"\bhr\b",
     r"sap",
     r"abap",
     r"node.js",
@@ -74,6 +74,8 @@ excluded_role_pattern = "|".join(excluded_role_patterns)
 
 
 def filter_(df: pd.DataFrame) -> pd.DataFrame:
+    if len(df) == 0:
+        return df
     df = df[~df["category"].isin(excluded_categories)]
     df = df[~df["min_experience"].isin(excluded_min_experience)]
     df = df[

@@ -13,6 +13,19 @@ from selenium.common.exceptions import (
     ElementNotInteractableException,
 )
 import time
+from job_ad import JobAd
+from typing import Set
+from pydantic import ValidationError
+import json
+
+logger = logging.Logger(__name__)
+date = datetime.strftime(datetime.now(), "%Y-%m-%d")
+logging_setup(
+    logger,
+    mode="fc",
+    filename=f"log/{date}.log",
+    filemode="w",
+)
 
 RETRY_WAIT = 60  # baseline time to wait (in seconds)
 MAX_RETRIES = 5  # times to retry
@@ -21,21 +34,13 @@ MAX_RETRIES = 5  # times to retry
 retry_generator = (RETRY_WAIT * 2**i for i in range(MAX_RETRIES))
 
 
-def scrape(debug=False, retries=0) -> list[dict]:
+def scrape(debug=False, retries=0) -> Set[JobAd]:
     if retries > MAX_RETRIES:
         raise TimeoutException(
             f"Max retries ({MAX_RETRIES}) reached, exiting"
         )
     if retries != 0:
         time.sleep(next(retry_generator))
-    date = datetime.strftime(datetime.now(), "%Y-%m-%d")
-    logger = logging.Logger(__name__)
-    logging_setup(
-        logger,
-        mode="fc",
-        filename=f"log/{'debug' if debug else date}.log",
-        filemode="w",
-    )
 
     start = perf_counter()
 
@@ -54,7 +59,7 @@ def scrape(debug=False, retries=0) -> list[dict]:
     # options.binary_location = "/snap/firefox/current/firefox.launcher"
 
     url = "https://www.kariera.gr/en"
-    results = []
+    results = set()
     # Keep track of ingested ads to reduce completion time and skip duplicate removal
     link_set = set()
     driver = webdriver.Firefox(options=options)
@@ -76,7 +81,8 @@ def scrape(debug=False, retries=0) -> list[dict]:
             elem = short_wait.until(
                 EC.presence_of_element_located((by, value))
             )
-            return elem.text.strip()
+            text = elem.get_attribute("innerText") or ""
+            return text.strip()
         except:
             logger.info("value not found")
             return None
@@ -156,7 +162,7 @@ def scrape(debug=False, retries=0) -> list[dict]:
                 # filter out existing links and sponsored links (they are duplicates)
                 if (
                     ad_link_text in link_set
-                    or "sponsored" in ad_link_text
+                    or "sponsored" in ad_link_text  # type: ignore
                 ):
                     continue
                 else:
@@ -243,23 +249,38 @@ def scrape(debug=False, retries=0) -> list[dict]:
                 except:
                     tags = []
 
+                data_json = _safe_find_text_elem(
+                    By.CSS_SELECTOR,
+                    "script[type='application/ld+json']",
+                )
+                data = json.loads(data_json)  # type: ignore
+                date_posted = datetime.fromisoformat(
+                    data.get("datePosted")
+                )
+
                 driver.close()
                 driver.switch_to.window(driver.window_handles[-1])
-                results.append(
-                    {
-                        "role": role,
-                        "company": company,
-                        "location": location,
-                        "date_posted": date_posted,
-                        "min_experience": min_experience,
-                        "employment_type": employment_type,
-                        "category": category,
-                        "remote": remote,
-                        "details": details,
-                        "tags": tags,
-                        "ad_link": ad_link_text,
-                    }
-                )
+                job_ad_dict = {
+                    "role": role,
+                    "company": company,
+                    "location": location,
+                    "date_posted": date_posted,
+                    "min_experience": min_experience,
+                    "employment_type": employment_type,
+                    "category": category,
+                    "remote": remote,
+                    "details": details,
+                    "tags": tags,
+                    "ad_link": ad_link_text,
+                    "date_posted": date_posted,
+                }
+                try:
+                    results.add(JobAd(**job_ad_dict))
+                except ValidationError as e:
+                    logger.exception(
+                        f"Couldn't validate entry {ad_link}\n{e}"
+                    )
+
             button = long_wait.until(
                 EC.visibility_of_element_located(
                     (
