@@ -9,6 +9,7 @@ from pathlib import Path
 from filtering import filter_
 import pandas as pd
 from logging_setup import logging_setup
+import re
 
 logger = logging.Logger(__name__)
 date = datetime.strftime(datetime.now(), "%Y-%m-%d")
@@ -19,6 +20,8 @@ logging_setup(
     filemode="w",
 )
 
+# adjust the variables if needed.
+# Use the provided .sql to create the table
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "Password21!!!")
@@ -95,14 +98,14 @@ class DBWriter:
                                 role = EXCLUDED.role,
                                 company = EXCLUDED.company,
                                 location = EXCLUDED.location,
-                                min_experiene = EXCLUDED.min_experiene,
+                                min_experience = EXCLUDED.min_experience,
                                 employment_type = EXCLUDED.employment_type,
                                 category = EXCLUDED.category,
                                 remote = EXCLUDED.remote,
                                 details = EXCLUDED.details,
                                 tags = EXCLUDED.tags,
                                 date_posted = EXCLUDED.date_posted,
-                                date_updated = EXCLUDED.date_updated
+                                date_updated = EXCLUDED.date_updated,
                                 report = FALSE
                             """
                         ),
@@ -143,6 +146,9 @@ class DBWriter:
 
         # Prepend result to daily report
         _prepend_daily_report(daily_report)
+
+        # change date to 'days-old' format for all entries (including older ones)
+        self._adjust_markdown_date_fmt(du_md_filename)
 
         # set all unreported entries, to reported in the database
         self._set_all_unreported_to_reported()
@@ -191,3 +197,23 @@ class DBWriter:
         return (
             f"#### {datetime.now().strftime('%Y-%m-%d')}\n" + contents
         )
+
+    @staticmethod
+    def _adjust_markdown_date_fmt(md_filename: str):
+        """swap all entry dates (excludes headers) with 'days-old' using current date"""
+
+        def repl(match: re.Match):
+            value = datetime.strptime(match.group(0), "%Y-%m-%d")
+            now = datetime.now().replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            return f"{str((now - value).days).zfill(2)}d"
+
+        with open(md_filename, "r") as f:
+            original = f.read()
+
+        with open(md_filename, "w") as f:
+            adjusted = re.sub(
+                r"(?<! )\b\d{4}-\d{2}-\d{2}\b", repl, original
+            )
+            f.write(adjusted)

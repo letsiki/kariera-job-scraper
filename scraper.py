@@ -253,7 +253,10 @@ def scrape(debug=False, retries=0) -> Set[JobAd]:
                     By.CSS_SELECTOR,
                     "script[type='application/ld+json']",
                 )
-                data = json.loads(data_json)  # type: ignore
+                try:
+                    data = json.loads(data_json)  # type: ignore
+                except TypeError:
+                    continue
                 date_posted = datetime.fromisoformat(
                     data.get("datePosted")
                 )
