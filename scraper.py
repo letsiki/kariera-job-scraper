@@ -17,6 +17,7 @@ from job_ad import JobAd
 from typing import Set
 from pydantic import ValidationError
 import json
+import pandas as pd
 
 logger = logging.Logger(__name__)
 date = datetime.strftime(datetime.now(), "%Y-%m-%d")
@@ -34,7 +35,7 @@ MAX_RETRIES = 5  # times to retry
 retry_generator = (RETRY_WAIT * 2**i for i in range(MAX_RETRIES))
 
 
-def scrape(debug=False, retries=0) -> Set[JobAd]:
+def scrape(debug=False, retries=0, to_pkl=True) -> Set[JobAd]:
     if retries > MAX_RETRIES:
         raise TimeoutException(
             f"Max retries ({MAX_RETRIES}) reached, exiting"
@@ -303,4 +304,9 @@ def scrape(debug=False, retries=0) -> Set[JobAd]:
         f"operation completed in {int((perf_counter() - start) // 60)}  minutes and {round((perf_counter() - start) % 60)} seconds ({retries} retries)."
     )
 
+    if to_pkl:
+        pd.DataFrame([ja.model_dump() for ja in results]).to_pickle("latest_scrapings.pkl")
+
     return results
+
+
