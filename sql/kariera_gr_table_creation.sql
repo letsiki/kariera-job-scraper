@@ -18,3 +18,7 @@ CREATE TABLE IF NOT EXISTS "job_ads" (
 CREATE INDEX idx_job_ads_date_updated ON job_ads (date_updated);
 CREATE INDEX idx_job_ads_report_false ON job_ads (report)
 WHERE report = false;
+
+ALTER TABLE job_ads
+ADD COLUMN renewals SMALLINT DEFAULT 0;
+

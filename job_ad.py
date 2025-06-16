@@ -24,6 +24,9 @@ class JobAd(BaseModel):
         None  # Default None is needed here because it is not passed
     )
     report: bool = False
+    renewals: int = (
+        0  # Default 0 is needed here because it is not passed
+    )
 
     class Config:
         validate_assignment = True
@@ -53,4 +56,4 @@ class JobAd(BaseModel):
         """
         Returns Markdown style string
         """
-        return f"{self.date_posted.astimezone(ZoneInfo('Europe/Athens')).strftime('%Y-%m-%d')} [{self.role} - {self.company} - {self.category} - {self.location}]({self.ad_link})"
+        return f"{self.date_posted.astimezone(ZoneInfo('Europe/Athens')).strftime('%Y-%m-%d')} r{str(self.renewals).zfill(2)} [{self.role} - {self.company} - {self.category} - {self.location}]({self.ad_link})"

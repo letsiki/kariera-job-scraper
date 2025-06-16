@@ -106,7 +106,8 @@ class DBWriter:
                                 tags = EXCLUDED.tags,
                                 date_posted = EXCLUDED.date_posted,
                                 date_updated = EXCLUDED.date_updated,
-                                report = FALSE
+                                report = FALSE,
+                                renewals = renewals + 1
                             """
                         ),
                         param_dict,

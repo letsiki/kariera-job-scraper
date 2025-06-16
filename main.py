@@ -17,3 +17,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# TODO:
+#   - Add a default 0, repost_count field -> done add both two database and jobad class
+#   - In upserts increment it -> done
+#   - Make it part of the JobAd __str__ -> done
