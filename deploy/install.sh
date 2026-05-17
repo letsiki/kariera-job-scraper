@@ -115,6 +115,9 @@ done
 
 echo "==> applying schema (idempotent)"
 sudo -u postgres psql -d "$PG_DB" -f "$APP_HOME/sql/kariera_gr_table_creation.sql" >/dev/null
+# Schema is applied as postgres, so the table ends up owned by postgres.
+# Hand ownership to the app role so the runtime can read/write it.
+sudo -u postgres psql -d "$PG_DB" -c "ALTER TABLE job_ads OWNER TO $PG_USER; GRANT ALL ON TABLE job_ads TO $PG_USER;" >/dev/null
 
 echo "==> installing systemd unit + timer"
 install -m 0644 "$APP_HOME/deploy/scraper.service" /etc/systemd/system/kariera-scraper.service
