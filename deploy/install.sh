@@ -61,7 +61,9 @@ rsync -a --delete \
     --exclude='.git' --exclude='__pycache__' --exclude='.venv' \
     --exclude='data' --exclude='log' --exclude='.env' \
     "$REPO_DIR/" "$APP_HOME/"
-mkdir -p "$APP_HOME/data" "$APP_HOME/log"
+mkdir -p "$APP_HOME/data" "$APP_HOME/log" "$APP_HOME/data/filtering"
+# filtering.py reads this at import time. Empty file = no location exclusions.
+[ -f "$APP_HOME/data/filtering/locations.csv" ] || echo "location" > "$APP_HOME/data/filtering/locations.csv"
 chown -R "$APP_USER:$APP_USER" "$APP_HOME"
 
 echo "==> creating venv and installing python deps"
