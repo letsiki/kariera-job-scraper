@@ -30,7 +30,7 @@ logging_setup(
 BASE_URL = "https://www.kariera.gr"
 SEARCH_TERMS = ("Data", "Python", "IT", "Software", "Developer")
 SEL_COOKIE_ACCEPT = "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll"
-DEFAULT_TIMEOUT_MS = 15_000
+DEFAULT_TIMEOUT_MS = 45_000
 
 # Matches absolute or relative hrefs of form /en/jobs/<slug>/<numeric-id>
 AD_LINK_RE = re.compile(r"^/en/jobs/[^/?]+/\d+(?:[/?#].*)?$")
@@ -108,16 +108,24 @@ def _collect_ad_links_on_listing(page: Page) -> list[str]:
     return out
 
 
-def _scroll_to_load_more(page: Page, max_scrolls: int = 20) -> None:
-    """Scroll to bottom repeatedly until link count stops growing."""
+def _scroll_to_load_more(
+    page: Page, max_scrolls: int = 8, max_ad_links: int = 50
+) -> None:
+    """Scroll to bottom until link count stops growing, we hit `max_scrolls`,
+    or we have `max_ad_links` collected. Capped to keep DOM size — and
+    Chromium memory — bounded on small (1GB) hosts."""
     prev = -1
-    for i in range(max_scrolls):
+    for _ in range(max_scrolls):
         page.mouse.wheel(0, 20_000)
         page.wait_for_timeout(800)
-        count = page.evaluate("document.querySelectorAll('a[href]').length")
-        if count == prev:
+        ad_count = page.evaluate(
+            """() => Array.from(document.querySelectorAll('a[href]'))
+                .filter(a => /^\\/en\\/jobs\\/[^\\/?]+\\/\\d+/.test(a.getAttribute('href') || ''))
+                .length"""
+        )
+        if ad_count >= max_ad_links or ad_count == prev:
             break
-        prev = count
+        prev = ad_count
 
 
 def _parse_ad_from_jsonld(page: Page, ad_url: str) -> JobAd | None:
@@ -221,6 +229,13 @@ def scrape(debug: bool = False, retries: int = 0, to_pkl: bool = True) -> Set[Jo
             collected: list[str] = []
             for term in SEARCH_TERMS:
                 logger.info(f"collecting links for term: {term}")
+                # Recreate the page between terms so Chromium drops the heavy
+                # post-scroll DOM. Important on 1GB hosts where carrying it
+                # across navigations leads to swap thrashing.
+                page.close()
+                page = context.new_page()
+                page.set_default_timeout(DEFAULT_TIMEOUT_MS)
+
                 page.goto(
                     f"{BASE_URL}/en/jobs?title={term}",
                     wait_until="domcontentloaded",
