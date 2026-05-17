@@ -32,11 +32,25 @@ POSTGRES_TABLE = "job_ads"
 
 
 class DBWriter:
-    def __init__(self, scraped_jobs: set[JobAd]):
+    def __init__(self, scraped_jobs: set[JobAd] | None = None):
         self._engine: Engine = create_engine(
             f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}/{POSTGRES_DB}"
         )
-        self._scraped_jobs = scraped_jobs
+        self.scraped_jobs: set[JobAd] = scraped_jobs or set()
+
+    @property
+    def _scraped_jobs(self) -> set[JobAd]:
+        """Backwards-compat alias for the private attribute used elsewhere."""
+        return self.scraped_jobs
+
+    def known_ad_links(self) -> set[str]:
+        """All ad_link primary keys currently in the DB. Used by the scraper
+        to skip detail-page fetches for ads we already have."""
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(f"SELECT ad_link FROM {POSTGRES_TABLE}")
+            ).all()
+        return {r[0] for r in rows}
 
     def _get_last_update_from_db(self) -> datetime | None:
 

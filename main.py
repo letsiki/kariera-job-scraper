@@ -10,7 +10,10 @@ def main():
     )
     args = parser.parse_args()
 
-    dbwriter = DBWriter(scraped_jobs=scrape(args.debug))
+    # Connect first so the scraper can skip already-known ads.
+    dbwriter = DBWriter()
+    known = dbwriter.known_ad_links()
+    dbwriter.scraped_jobs = scrape(args.debug, skip_links=known)
     dbwriter.insert_job_ads()
     dbwriter.to_markdown(filtered_only=True)
     dbwriter.export_snapshots()

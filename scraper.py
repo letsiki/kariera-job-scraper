@@ -228,11 +228,23 @@ def _parse_ad_from_jsonld(page: Page, ad_url: str) -> JobAd | None:
         return None
 
 
-def scrape(debug: bool = False, retries: int = 0) -> Set[JobAd]:
-    """Scrape kariera.gr job ads. In debug mode, caps to ~5 ads per search term."""
+def scrape(
+    debug: bool = False,
+    retries: int = 0,
+    skip_links: frozenset[str] | set[str] = frozenset(),
+) -> Set[JobAd]:
+    """Scrape kariera.gr job ads. In debug mode, caps to ~5 ads per source.
+
+    `skip_links`: ad URLs to skip during link collection — typically the
+    set of ad_links already in the DB. This avoids re-fetching detail
+    pages we already have, turning day-N runs from ~20 min to a few min.
+    """
     start = perf_counter()
     results: Set[JobAd] = set()
-    seen_links: set[str] = set()
+    # Seed seen_links with the skip set so the existing dedup machinery
+    # also handles already-in-DB ads — no special casing needed downstream.
+    seen_links: set[str] = set(skip_links)
+    skip_count_initial = len(seen_links)
 
     with sync_playwright() as p:
         # Memory-friendly Chromium flags so this also runs on 1GB VMs.
@@ -303,7 +315,10 @@ def scrape(debug: bool = False, retries: int = 0) -> Set[JobAd]:
                     added += 1
                 logger.info(f"  {label}: {len(links)} links, {added} new")
 
-            logger.info(f"collected {len(collected)} unique ad links")
+            logger.info(
+                f"collected {len(collected)} new ad links "
+                f"(skipped {skip_count_initial} already-known)"
+            )
 
             # Recycle the page every PAGE_RECYCLE_EVERY ads so Chromium's
             # accumulated state (caches, leftover DOM, lingering listeners)
