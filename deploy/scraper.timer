@@ -1,0 +1,12 @@
+[Unit]
+Description=Run kariera-scraper daily
+
+[Timer]
+# 04:00 Athens time daily. Persistent=true catches up after VM reboots.
+OnCalendar=*-*-* 04:00:00 Europe/Athens
+Persistent=true
+RandomizedDelaySec=5min
+Unit=kariera-scraper.service
+
+[Install]
+WantedBy=timers.target

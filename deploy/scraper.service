@@ -1,0 +1,26 @@
+[Unit]
+Description=kariera.gr daily job scraper
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kariera
+Group=kariera
+WorkingDirectory=/opt/kariera-job-scraper
+EnvironmentFile=/opt/kariera-job-scraper/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/kariera-job-scraper/.venv/bin/python -m main
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=30min
+
+# Sandbox hardening — the scraper only needs network + its own data dir.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/kariera-job-scraper/data /opt/kariera-job-scraper/log
+
+[Install]
+WantedBy=multi-user.target
