@@ -75,10 +75,12 @@ cd '$APP_HOME'
 .venv/bin/pip install --quiet -e .
 "
 
-echo "==> installing playwright chromium (with system deps)"
+echo "==> installing playwright browsers (with system deps)"
 sudo -u "$APP_USER" -- bash -c "
 cd '$APP_HOME'
-.venv/bin/playwright install chromium >/dev/null
+# headless-shell is what p.chromium.launch(headless=True) actually invokes
+# in recent Playwright; chromium is kept as a fallback for non-headless use.
+.venv/bin/playwright install chromium chromium-headless-shell >/dev/null
 "
 # install OS-level deps for chromium (needs root)
 "$APP_HOME/.venv/bin/playwright" install-deps chromium >/dev/null
