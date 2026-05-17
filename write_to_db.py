@@ -20,12 +20,14 @@ logging_setup(
     filemode="w",
 )
 
-# adjust the variables if needed.
-# Use the provided .sql to create the table
+from dotenv import load_dotenv
+
+load_dotenv()
+
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "Password21!!!")
-POSTGRES_DB = "kariera_gr"
+POSTGRES_PASSWORD = os.environ["POSTGRES_PASSWORD"]
+POSTGRES_DB = os.getenv("POSTGRES_DB", "kariera_gr")
 POSTGRES_TABLE = "job_ads"
 
 
@@ -153,6 +155,50 @@ class DBWriter:
 
         # set all unreported entries, to reported in the database
         self._set_all_unreported_to_reported()
+
+    def export_snapshots(
+        self,
+        jsonl_path: str = "data/exports/jobs.jsonl",
+        skills_csv_path: str = "data/exports/skills.csv",
+        window_days: int = 30,
+    ) -> None:
+        """Write rolling-window exports consumed by career-copilot:
+
+        - `jobs.jsonl`: one JSON object per ad from the last `window_days`.
+        - `skills.csv`: flat (ad_link, tag) pairs over the same window.
+        """
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    f"""
+                    SELECT * FROM {POSTGRES_TABLE}
+                    WHERE date_posted >= NOW() - (:days || ' days')::interval
+                    """
+                ),
+                {"days": window_days},
+            ).mappings().all()
+
+        df = pd.DataFrame(rows)
+        Path(jsonl_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(skills_csv_path).parent.mkdir(parents=True, exist_ok=True)
+
+        if df.empty:
+            Path(jsonl_path).write_text("")
+            Path(skills_csv_path).write_text("ad_link,tag\n")
+            logger.info("export_snapshots: no rows in window")
+            return
+
+        df.to_json(jsonl_path, orient="records", lines=True, date_format="iso", force_ascii=False)
+
+        skills_df = df[["ad_link", "tags"]].explode("tags").dropna(subset=["tags"])
+        skills_df = skills_df.rename(columns={"tags": "tag"})
+        skills_df = skills_df[skills_df["tag"].astype(str).str.len() > 0]
+        skills_df.to_csv(skills_csv_path, index=False)
+
+        logger.info(
+            f"export_snapshots: wrote {len(df)} ads to {jsonl_path}, "
+            f"{len(skills_df)} (ad_link,tag) rows to {skills_csv_path}"
+        )
 
     def _retrieve_unreported(self) -> list[dict]:
         with self._engine.connect() as conn:

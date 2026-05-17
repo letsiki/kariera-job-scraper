@@ -1,0 +1,33 @@
+[project]
+name = "kariera-job-scraper"
+version = "0.2.0"
+description = "Daily scraper for kariera.gr job ads"
+requires-python = ">=3.11"
+dependencies = [
+    "playwright>=1.40",
+    "pydantic>=2.0",
+    "sqlalchemy>=2.0",
+    "psycopg2-binary>=2.9",
+    "pandas>=2.0",
+    "python-dotenv>=1.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = [
+    "main",
+    "scraper",
+    "write_to_db",
+    "job_ad",
+    "filtering",
+    "utility",
+    "logger",
+    "logging_setup",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

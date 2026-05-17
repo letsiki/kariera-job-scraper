@@ -13,6 +13,7 @@ def main():
     dbwriter = DBWriter(scraped_jobs=scrape(args.debug))
     dbwriter.insert_job_ads()
     dbwriter.to_markdown(filtered_only=True)
+    dbwriter.export_snapshots()
 
 
 if __name__ == "__main__":

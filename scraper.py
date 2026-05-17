@@ -1,23 +1,22 @@
-from selenium import webdriver
-from selenium.webdriver.firefox.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.keys import Keys
-import logging
-from logging_setup import logging_setup
-from time import perf_counter
-from datetime import datetime
-from selenium.common.exceptions import (
-    TimeoutException,
-    ElementNotInteractableException,
-)
-import time
-from job_ad import JobAd
-from typing import Set
-from pydantic import ValidationError
 import json
+import logging
+import re
+from datetime import datetime
+from html.parser import HTMLParser
+from time import perf_counter
+from typing import Set
+from urllib.parse import urljoin
+
 import pandas as pd
+from playwright.sync_api import (
+    Page,
+    TimeoutError as PlaywrightTimeoutError,
+    sync_playwright,
+)
+from pydantic import ValidationError
+
+from job_ad import JobAd
+from logging_setup import logging_setup
 
 logger = logging.Logger(__name__)
 date = datetime.strftime(datetime.now(), "%Y-%m-%d")
@@ -28,285 +27,220 @@ logging_setup(
     filemode="w",
 )
 
-RETRY_WAIT = 60  # baseline time to wait (in seconds)
-MAX_RETRIES = 5  # times to retry
+BASE_URL = "https://www.kariera.gr"
+SEARCH_TERMS = ("Data", "Python", "IT", "Software", "Developer")
+SEL_COOKIE_ACCEPT = "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll"
+DEFAULT_TIMEOUT_MS = 15_000
 
-# Generator for exponential backoff retry intervals
-retry_generator = (RETRY_WAIT * 2**i for i in range(MAX_RETRIES))
+# Matches absolute or relative hrefs of form /en/jobs/<slug>/<numeric-id>
+AD_LINK_RE = re.compile(r"^/en/jobs/[^/?]+/\d+(?:[/?#].*)?$")
 
 
-def scrape(debug=False, retries=0, to_pkl=True) -> Set[JobAd]:
-    if retries > MAX_RETRIES:
-        raise TimeoutException(
-            f"Max retries ({MAX_RETRIES}) reached, exiting"
+class _BlockTextExtractor(HTMLParser):
+    """Pulls text from <p>, <li>, <strong>, <br>-separated lines. Used to convert
+    JSON-LD description HTML into the list-of-strings `JobAd.details` expects."""
+
+    BLOCK_TAGS = {"p", "li", "strong", "h1", "h2", "h3", "h4", "h5", "h6", "div"}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._buf: list[str] = []
+        self._out: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "br":
+            self._flush()
+
+    def handle_endtag(self, tag):
+        if tag in self.BLOCK_TAGS:
+            self._flush()
+
+    def handle_data(self, data):
+        self._buf.append(data)
+
+    def _flush(self):
+        text = "".join(self._buf).strip()
+        if text:
+            self._out.append(text)
+        self._buf.clear()
+
+    def close(self):
+        super().close()
+        self._flush()
+
+    @property
+    def lines(self) -> list[str]:
+        return self._out
+
+
+def _html_to_lines(html: str) -> list[str]:
+    if not html:
+        return []
+    parser = _BlockTextExtractor()
+    parser.feed(html)
+    parser.close()
+    return parser.lines
+
+
+def _accept_cookies(page: Page) -> None:
+    try:
+        page.click(SEL_COOKIE_ACCEPT, timeout=5_000)
+        logger.info("accepted cookie banner")
+    except PlaywrightTimeoutError:
+        logger.info("no cookie banner")
+
+
+def _collect_ad_links_on_listing(page: Page) -> list[str]:
+    """Return absolute URLs to job-ad detail pages on the current listing page."""
+    raw = page.eval_on_selector_all(
+        "a[href]",
+        "els => Array.from(new Set(els.map(e => e.getAttribute('href')).filter(Boolean)))",
+    )
+    out: list[str] = []
+    seen: set[str] = set()
+    for href in raw:
+        if not AD_LINK_RE.match(href):
+            continue
+        url = urljoin(BASE_URL, href.split("?")[0])
+        if url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out
+
+
+def _scroll_to_load_more(page: Page, max_scrolls: int = 20) -> None:
+    """Scroll to bottom repeatedly until link count stops growing."""
+    prev = -1
+    for i in range(max_scrolls):
+        page.mouse.wheel(0, 20_000)
+        page.wait_for_timeout(800)
+        count = page.evaluate("document.querySelectorAll('a[href]').length")
+        if count == prev:
+            break
+        prev = count
+
+
+def _parse_ad_from_jsonld(page: Page, ad_url: str) -> JobAd | None:
+    page.goto(ad_url, wait_until="domcontentloaded", timeout=DEFAULT_TIMEOUT_MS)
+    try:
+        raw = page.eval_on_selector(
+            "script[type='application/ld+json']", "el => el && el.textContent"
         )
-    if retries != 0:
-        time.sleep(next(retry_generator))
+    except Exception:
+        raw = None
+    if not raw:
+        logger.error(f"no JSON-LD on {ad_url}")
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON-LD decode failed for {ad_url}: {e}")
+        return None
+    if data.get("@type") != "JobPosting":
+        return None
 
+    org = data.get("hiringOrganization") or {}
+    addr = (data.get("jobLocation") or {}).get("address") or {}
+    location_parts = [
+        addr.get("addressLocality"),
+        addr.get("addressRegion"),
+        addr.get("addressCountry"),
+    ]
+    location = ", ".join(p for p in location_parts if p) or ""
+
+    skills = data.get("skills") or []
+    tags = [
+        s.get("name", "").strip()
+        for s in skills
+        if isinstance(s, dict) and s.get("name")
+    ]
+
+    date_posted_raw = data.get("datePosted")
+    if not date_posted_raw:
+        return None
+    try:
+        date_posted = datetime.fromisoformat(date_posted_raw.replace("Z", "+00:00"))
+    except ValueError as e:
+        logger.error(f"bad datePosted {date_posted_raw!r} on {ad_url}: {e}")
+        return None
+
+    job_ad_dict = {
+        "role": (data.get("title") or "").strip(),
+        "company": (org.get("name") or "").strip(),
+        "location": location,
+        "min_experience": data.get("experienceRequirements"),
+        "employment_type": (data.get("employmentType") or "").strip(),
+        "category": (data.get("occupationalCategory") or "").strip(),
+        "remote": None,  # not in JSON-LD; could be derived from page text in a follow-up
+        "details": _html_to_lines(data.get("description") or ""),
+        "tags": tags,
+        "ad_link": ad_url,
+        "date_posted": date_posted,
+    }
+    try:
+        return JobAd(**job_ad_dict)
+    except ValidationError as e:
+        logger.exception(f"validation failed for {ad_url}: {e}")
+        return None
+
+
+def scrape(debug: bool = False, retries: int = 0, to_pkl: bool = True) -> Set[JobAd]:
+    """Scrape kariera.gr job ads. In debug mode, caps to ~5 ads per search term."""
     start = perf_counter()
+    results: Set[JobAd] = set()
+    seen_links: set[str] = set()
 
-    # initialize scraping options
-    options = Options()
-    # set scraper to run in headless mode
-    options.add_argument("--headless")
-    # pass the location of the firefox browser
-    # it does not get automatically located because
-    # it is snap-installed
-    # Either point at the ELF binary:
-    options.binary_location = (
-        "/snap/firefox/current/usr/lib/firefox/firefox"
-    )
-    # —or— point at the launcher stub:
-    # options.binary_location = "/snap/firefox/current/firefox.launcher"
-
-    url = "https://www.kariera.gr/en"
-    results = set()
-    # Keep track of ingested ads to reduce completion time and skip duplicate removal
-    link_set = set()
-    driver = webdriver.Firefox(options=options)
-    driver.get(url)
-
-    # Introduce  a wait driver to be used with interactable elements
-    long_wait = WebDriverWait(driver, 15)
-    # and a shorter wait for data fetching
-    #  the reason  for the shorter wait is
-    # the fact that some elements are intentionally
-    # missing, and I dont want to waste 10 seconds on
-    # each of them, It is a fine balance and as of now
-    # I think 1sec works fine
-    short_wait = WebDriverWait(driver, 0.5)
-
-    # define a function to use with elements containing text data
-    def _safe_find_text_elem(by, value):
-        try:
-            elem = short_wait.until(
-                EC.presence_of_element_located((by, value))
-            )
-            text = elem.get_attribute("innerText") or ""
-            return text.strip()
-        except:
-            logger.info("value not found")
-            return None
-
-    # Find Cookie Allow Button
-    try:
-        cookie_allow_btn = long_wait.until(
-            EC.element_to_be_clickable(
-                (
-                    By.CSS_SELECTOR,
-                    "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",
-                )
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
             )
         )
-    except TimeoutException as e:
-        logger.error(f"{e}\nrestarting scraper")
-        return scrape(debug=debug, retries=retries + 1)
-    # Click Allow Button
-    try:
-        cookie_allow_btn.click()
-    except ElementNotInteractableException as e:
-        logger.error(f"{e}\nrestarting scraper")
-        return scrape(debug=debug, retries=retries + 1)
-    # Locate the main page Search button and click on it(move to the search page)
-    search_page = long_wait.until(
-        EC.element_to_be_clickable(
-            (
-                By.XPATH,
-                "/html/body/div[2]/div/div[2]/div/main/section[1]/div[1]/div[1]/div[3]",
-            )
-        )
-    )
-    search_page.click()
-    # Loop through all different searches
-    for job_role in ("Data", "Python", "IT", "Software", "Developer"):
-        # Locate search box, clear it, and send it  the search string
+        page = context.new_page()
+        page.set_default_timeout(DEFAULT_TIMEOUT_MS)
+
         try:
-            search_box = long_wait.until(
-                EC.element_to_be_clickable(
-                    (By.XPATH, '//*[@id="rc_select_2"]')
-                )
-            )
-        except TimeoutException as e:
-            logger.error(f"{e}\nrestarting scraper")
-            return scrape(debug=debug, retries=retries + 1)
-        search_box.clear()
-        search_box.send_keys(job_role + Keys.RETURN)
-        # Page-Looper
-        while True:
+            page.goto(f"{BASE_URL}/en", wait_until="domcontentloaded")
+            _accept_cookies(page)
 
-            # Find all job ads in the current page
-            try:
-                ad_links = long_wait.until(
-                    EC.visibility_of_all_elements_located(
-                        (
-                            By.CSS_SELECTOR,
-                            ".h5.BaseJobCard_jobTitle__ehsas",
-                        )
-                    )
+            collected: list[str] = []
+            for term in SEARCH_TERMS:
+                logger.info(f"collecting links for term: {term}")
+                page.goto(
+                    f"{BASE_URL}/en/jobs?title={term}",
+                    wait_until="domcontentloaded",
                 )
-            except TimeoutException as e:
-                logger.error(f"{e}\nrestarting scraper")
-                return scrape(debug=debug, retries=retries + 1)
-            # get one job ad per page if debug mode is on
-            if debug:
-                ad_links = ad_links[:5]
-            # Loop through all job ads in the current page
-            for ad_link in ad_links:
-                try:
-                    ad_link = long_wait.until(
-                        EC.element_to_be_clickable(ad_link)
-                    )
-                except TimeoutException as e:
-                    logger.error(f"{e}restarting scraper")
-                    return scrape(debug=debug, retries=retries + 1)
-                ad_link_text = ad_link.get_property("href")
-                # filter out existing links and sponsored links (they are duplicates)
-                if (
-                    ad_link_text in link_set
-                    or "sponsored" in ad_link_text  # type: ignore
-                ):
-                    continue
-                else:
-                    link_set.add(ad_link_text)
-                ad_link.click()
+                if not debug:
+                    _scroll_to_load_more(page)
+                links = _collect_ad_links_on_listing(page)
+                if debug:
+                    links = links[:5]
+                logger.info(f"  {len(links)} ad links from term={term}")
+                for link in links:
+                    if link in seen_links:
+                        continue
+                    seen_links.add(link)
+                    collected.append(link)
 
-                logger.info(f"fetching {ad_link_text}")
-                driver.switch_to.window(driver.window_handles[-1])
-                # find mandatory element(use wait instead of wait2), may turn this into a function
-                try:
-                    role = long_wait.until(
-                        EC.presence_of_element_located(
-                            (
-                                By.CSS_SELECTOR,
-                                ".h4.JobTitle_title__irhyN",
-                            )
-                        )
-                    ).text.strip()
-                except TimeoutException as e:
-                    logger.error(f"{e}did not fetch role restarting")
-                    return scrape(debug=debug, retries=retries + 1)
+            logger.info(f"collected {len(collected)} unique ad links")
 
-                company = _safe_find_text_elem(
-                    By.CSS_SELECTOR,
-                    ".h6.JobCompanyName_name__V9AaS ",
-                )
+            for ad_url in collected:
+                logger.info(f"fetching {ad_url}")
+                ad = _parse_ad_from_jsonld(page, ad_url)
+                if ad is not None:
+                    results.add(ad)
+        finally:
+            context.close()
+            browser.close()
 
-                location = _safe_find_text_elem(
-                    By.CSS_SELECTOR,
-                    ".JobDetail_value__1yhn_.main-body-text",
-                )
-                date_posted = _safe_find_text_elem(
-                    By.CSS_SELECTOR,
-                    "div.JobDetail_detail___Th__:nth-child(2) > div:nth-child(2)",
-                )
-
-                min_experience = _safe_find_text_elem(
-                    By.CSS_SELECTOR,
-                    "div.JobDetail_detail___Th__:nth-child(3) > a:nth-child(2)",
-                )
-
-                employment_type = _safe_find_text_elem(
-                    By.CSS_SELECTOR,
-                    "div.JobDetail_detail___Th__:nth-child(4) > a:nth-child(2)",
-                )
-                category = _safe_find_text_elem(
-                    By.CSS_SELECTOR,
-                    ".JobDetails_singleDoubleColumn__NwW1V > div:nth-child(1) > a:nth-child(2)",
-                )
-
-                remote = _safe_find_text_elem(
-                    By.CSS_SELECTOR,
-                    ".JobDetails_singleDoubleColumn__NwW1V > div:nth-child(2) > a:nth-child(2)",
-                )
-
-                details = []
-                try:
-                    contents_prt = short_wait.until(
-                        EC.visibility_of_element_located(
-                            (
-                                By.CLASS_NAME,
-                                "HtmlRenderer_renderer__mr82C",
-                            )
-                        )
-                    )
-                except:
-                    contents_prt = None
-                if contents_prt:
-                    for contents_chd in contents_prt.find_elements(
-                        By.XPATH, ".//p | .//strong | .//li"
-                    ):
-                        if contents_chd.text.strip() != "":
-                            details.append(contents_chd.text.strip())
-                try:
-                    tags = short_wait.until(
-                        EC.visibility_of_all_elements_located(
-                            (
-                                By.CSS_SELECTOR,
-                                '[class*="Label_label__Llv6_"]',
-                            )
-                        )
-                    )
-                    tags = [tag.text for tag in tags]
-                except:
-                    tags = []
-
-                data_json = _safe_find_text_elem(
-                    By.CSS_SELECTOR,
-                    "script[type='application/ld+json']",
-                )
-                try:
-                    data = json.loads(data_json)  # type: ignore
-                except TypeError:
-                    continue
-                date_posted = datetime.fromisoformat(
-                    data.get("datePosted")
-                )
-
-                driver.close()
-                driver.switch_to.window(driver.window_handles[-1])
-                job_ad_dict = {
-                    "role": role,
-                    "company": company,
-                    "location": location,
-                    "date_posted": date_posted,
-                    "min_experience": min_experience,
-                    "employment_type": employment_type,
-                    "category": category,
-                    "remote": remote,
-                    "details": details,
-                    "tags": tags,
-                    "ad_link": ad_link_text,
-                    "date_posted": date_posted,
-                }
-                try:
-                    results.add(JobAd(**job_ad_dict))
-                except ValidationError as e:
-                    logger.exception(
-                        f"Couldn't validate entry {ad_link}\n{e}"
-                    )
-
-            button = long_wait.until(
-                EC.visibility_of_element_located(
-                    (
-                        By.CSS_SELECTOR,
-                        ".ant-pagination-next > button:nth-child(1)",
-                    )
-                )
-            )
-            if button.is_enabled():
-                button.click()
-            else:
-                break
-    driver.quit()
-
-    logger.info(f"fetched {len(results)} job ads")
+    elapsed = perf_counter() - start
     logger.info(
-        f"operation completed in {int((perf_counter() - start) // 60)}  minutes and {round((perf_counter() - start) % 60)} seconds ({retries} retries)."
+        f"fetched {len(results)} ads in {int(elapsed // 60)}m {round(elapsed % 60)}s"
     )
 
     if to_pkl:
         pd.DataFrame([ja.model_dump() for ja in results]).to_pickle("latest_scrapings.pkl")
 
     return results
-
-

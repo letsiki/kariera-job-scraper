@@ -1,0 +1,38 @@
+{
+  "name": "kariera-job-scraper",
+  "image": "python-playwright",
+  "workspaceFolder": "/kjs",
+
+  "mounts": [
+    "source=${localWorkspaceFolder},target=/kjs,type=bind",
+    "source=${localEnv:HOME}/.claude,target=/home/claude/.claude,type=bind,consistency=cached",
+    "source=claude-npm-global,target=/home/claude/.npm-global,type=volume"
+  ],
+
+  "remoteUser": "claude",
+
+  "containerEnv": {
+    "PATH": "/home/claude/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "NPM_CONFIG_PREFIX": "/home/claude/.npm-global",
+    "PLAYWRIGHT_BROWSERS_PATH": "/ms-playwright"
+  },
+
+  "runArgs": ["--network=bridge"],
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/bin/python3",
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "charliermarsh.ruff"
+      }
+    }
+  },
+
+  "postStartCommand": "sudo chown -R claude:claude /home/claude/.npm-global && if [ ! -f /home/claude/.npm-global/bin/claude ]; then npm install -g @anthropic-ai/claude-code; fi && sudo rm -f /usr/bin/claude && touch /home/claude/.claude/claude.json && ln -sfn /home/claude/.claude/claude.json /home/claude/.claude.json && pip install --user --break-system-packages -e /kjs"
+}
