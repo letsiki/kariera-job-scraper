@@ -27,7 +27,37 @@ logging_setup(
 )
 
 BASE_URL = "https://www.kariera.gr"
-SEARCH_TERMS = ("Data", "Python", "IT", "Software", "Developer")
+
+# Walk kariera.gr's tech-relevant category listings. Captures every ad in
+# these categories regardless of how the role is titled — much higher
+# signal-to-noise than guessing search terms. The orchestrator
+# (career-copilot) handles per-user relevance filtering downstream.
+CATEGORY_PATHS = (
+    "it-jobs",
+    "data-or-big-data-jobs",
+    "devops-or-cloud-jobs",
+    "cyber-security-or-it-security-jobs",
+    "bi-or-business-analysis-jobs",
+    "research-and-development-jobs",
+    "science-or-research-jobs",
+    "engineering-jobs",
+    "e-commerce-or-digital-services-jobs",
+    "consulting-jobs",
+    "design-or-graphic-arts-or-creative-jobs",
+    "operations-jobs",
+)
+
+# Title searches catch tech roles filed under non-tech categories
+# (a "Python Developer" sometimes lives in OTHER, an "ML Engineer" in R&D).
+TITLE_SEARCHES = (
+    "Python",
+    "Machine Learning",
+    "Data Engineer",
+    "DevOps",
+    "SRE",
+    "Cloud",
+    "Kubernetes",
+)
 SEL_COOKIE_ACCEPT = "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll"
 DEFAULT_TIMEOUT_MS = 45_000
 
@@ -108,7 +138,7 @@ def _collect_ad_links_on_listing(page: Page) -> list[str]:
 
 
 def _scroll_to_load_more(
-    page: Page, max_scrolls: int = 8, max_ad_links: int = 50
+    page: Page, max_scrolls: int = 25, max_ad_links: int = 200
 ) -> None:
     """Scroll to bottom until link count stops growing, we hit `max_scrolls`,
     or we have `max_ad_links` collected. Capped to keep DOM size — and
@@ -232,31 +262,46 @@ def scrape(debug: bool = False, retries: int = 0) -> Set[JobAd]:
             page.goto(f"{BASE_URL}/en", wait_until="domcontentloaded")
             _accept_cookies(page)
 
+            # Each source is a listing URL: either a category path or a
+            # title-search query. Walking categories captures most tech ads
+            # by definition; title searches mop up tech roles miscategorised
+            # in non-tech buckets.
+            sources: list[tuple[str, str]] = [
+                (f"category:{path}", f"{BASE_URL}/en/jobs/{path}")
+                for path in CATEGORY_PATHS
+            ] + [
+                (f"title:{term}", f"{BASE_URL}/en/jobs?title={term}")
+                for term in TITLE_SEARCHES
+            ]
+
             collected: list[str] = []
-            for term in SEARCH_TERMS:
-                logger.info(f"collecting links for term: {term}")
-                # Recreate the page between terms so Chromium drops the heavy
-                # post-scroll DOM. Important on 1GB hosts where carrying it
-                # across navigations leads to swap thrashing.
+            for label, url in sources:
+                logger.info(f"collecting links from {label}")
+                # Recreate the page between sources so Chromium drops the
+                # heavy post-scroll DOM. Important on 1GB hosts where
+                # carrying state across navigations leads to swap thrashing.
                 page.close()
                 page = context.new_page()
                 page.set_default_timeout(DEFAULT_TIMEOUT_MS)
 
-                page.goto(
-                    f"{BASE_URL}/en/jobs?title={term}",
-                    wait_until="domcontentloaded",
-                )
+                try:
+                    page.goto(url, wait_until="domcontentloaded")
+                except PlaywrightTimeoutError:
+                    logger.warning(f"timeout opening {label}, skipping source")
+                    continue
                 if not debug:
                     _scroll_to_load_more(page)
                 links = _collect_ad_links_on_listing(page)
                 if debug:
                     links = links[:5]
-                logger.info(f"  {len(links)} ad links from term={term}")
+                added = 0
                 for link in links:
                     if link in seen_links:
                         continue
                     seen_links.add(link)
                     collected.append(link)
+                    added += 1
+                logger.info(f"  {label}: {len(links)} links, {added} new")
 
             logger.info(f"collected {len(collected)} unique ad links")
 
