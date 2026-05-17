@@ -16,9 +16,11 @@ StandardError=journal
 TimeoutStartSec=30min
 
 # Sandbox hardening — the scraper only needs network + its own data dir.
+# Note: ProtectHome is NOT enabled because Playwright caches the browser
+# binaries under /home/kariera/.cache/ms-playwright. The User=kariera +
+# ProtectSystem=strict combination still gives meaningful isolation.
 NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/opt/kariera-job-scraper/data /opt/kariera-job-scraper/log
 
