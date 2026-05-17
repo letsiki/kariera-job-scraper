@@ -191,7 +191,20 @@ def scrape(debug: bool = False, retries: int = 0, to_pkl: bool = True) -> Set[Jo
     seen_links: set[str] = set()
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        # Memory-friendly Chromium flags so this also runs on 1GB VMs.
+        # --disable-dev-shm-usage: use /tmp instead of /dev/shm (often tiny).
+        # --no-sandbox: we're already inside an isolated VM/container.
+        # --disable-gpu: no GPU available, skip the init path.
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-extensions",
+                "--no-zygote",
+            ],
+        )
         context = browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "

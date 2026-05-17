@@ -23,6 +23,24 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+# --- Low-memory hardening (E2.1.Micro / any <2GB VM) -----------------------
+# On 1GB hosts, Chromium launch can spike past available RAM. Add a 2GB swap
+# file and lower vm.swappiness so we only dip into it under real pressure.
+echo "==> ensuring 2GB swapfile"
+if ! swapon --show | grep -q '^/swapfile'; then
+    if [[ ! -f /swapfile ]]; then
+        fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+        chmod 600 /swapfile
+        mkswap /swapfile >/dev/null
+    fi
+    swapon /swapfile
+fi
+if ! grep -q '^/swapfile' /etc/fstab; then
+    echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+sysctl -w vm.swappiness=10 >/dev/null
+grep -q '^vm.swappiness' /etc/sysctl.conf || echo 'vm.swappiness=10' >> /etc/sysctl.conf
+
 echo "==> installing apt packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
@@ -75,6 +93,21 @@ fi
 if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='$PG_DB'" | grep -q 1; then
     sudo -u postgres createdb --owner="$PG_USER" "$PG_DB"
 fi
+
+echo "==> tuning postgres for low-memory host"
+sudo -u postgres psql -q <<'SQL'
+ALTER SYSTEM SET shared_buffers = '32MB';
+ALTER SYSTEM SET work_mem = '2MB';
+ALTER SYSTEM SET maintenance_work_mem = '32MB';
+ALTER SYSTEM SET effective_cache_size = '256MB';
+ALTER SYSTEM SET max_connections = '20';
+SQL
+systemctl restart postgresql
+# Wait for postgres to come back up before applying schema.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    sudo -u postgres pg_isready >/dev/null 2>&1 && break
+    sleep 1
+done
 
 echo "==> applying schema (idempotent)"
 sudo -u postgres psql -d "$PG_DB" -f "$APP_HOME/sql/kariera_gr_table_creation.sql" >/dev/null
