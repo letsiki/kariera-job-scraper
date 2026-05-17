@@ -128,7 +128,14 @@ def _scroll_to_load_more(
 
 
 def _parse_ad_from_jsonld(page: Page, ad_url: str) -> JobAd | None:
-    page.goto(ad_url, wait_until="domcontentloaded", timeout=DEFAULT_TIMEOUT_MS)
+    try:
+        page.goto(ad_url, wait_until="domcontentloaded", timeout=DEFAULT_TIMEOUT_MS)
+    except PlaywrightTimeoutError:
+        logger.warning(f"navigation timeout on {ad_url}, skipping")
+        return None
+    except Exception as e:
+        logger.warning(f"navigation error on {ad_url}: {e}, skipping")
+        return None
     try:
         raw = page.eval_on_selector(
             "script[type='application/ld+json']", "el => el && el.textContent"
@@ -253,8 +260,17 @@ def scrape(debug: bool = False, retries: int = 0) -> Set[JobAd]:
 
             logger.info(f"collected {len(collected)} unique ad links")
 
-            for ad_url in collected:
-                logger.info(f"fetching {ad_url}")
+            # Recycle the page every PAGE_RECYCLE_EVERY ads so Chromium's
+            # accumulated state (caches, leftover DOM, lingering listeners)
+            # doesn't degrade after hundreds of navigations.
+            PAGE_RECYCLE_EVERY = 50
+            for i, ad_url in enumerate(collected):
+                if i > 0 and i % PAGE_RECYCLE_EVERY == 0:
+                    logger.info(f"recycling page after {i} ads")
+                    page.close()
+                    page = context.new_page()
+                    page.set_default_timeout(DEFAULT_TIMEOUT_MS)
+                logger.info(f"fetching ({i+1}/{len(collected)}) {ad_url}")
                 ad = _parse_ad_from_jsonld(page, ad_url)
                 if ad is not None:
                     results.add(ad)
