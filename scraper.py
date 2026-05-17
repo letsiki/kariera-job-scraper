@@ -7,7 +7,6 @@ from time import perf_counter
 from typing import Set
 from urllib.parse import urljoin
 
-import pandas as pd
 from playwright.sync_api import (
     Page,
     TimeoutError as PlaywrightTimeoutError,
@@ -192,7 +191,7 @@ def _parse_ad_from_jsonld(page: Page, ad_url: str) -> JobAd | None:
         return None
 
 
-def scrape(debug: bool = False, retries: int = 0, to_pkl: bool = True) -> Set[JobAd]:
+def scrape(debug: bool = False, retries: int = 0) -> Set[JobAd]:
     """Scrape kariera.gr job ads. In debug mode, caps to ~5 ads per search term."""
     start = perf_counter()
     results: Set[JobAd] = set()
@@ -267,8 +266,4 @@ def scrape(debug: bool = False, retries: int = 0, to_pkl: bool = True) -> Set[Jo
     logger.info(
         f"fetched {len(results)} ads in {int(elapsed // 60)}m {round(elapsed % 60)}s"
     )
-
-    if to_pkl:
-        pd.DataFrame([ja.model_dump() for ja in results]).to_pickle("latest_scrapings.pkl")
-
     return results
