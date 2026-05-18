@@ -123,7 +123,7 @@ class DBWriter:
                                 date_posted = EXCLUDED.date_posted,
                                 date_updated = EXCLUDED.date_updated,
                                 report = FALSE,
-                                renewals = renewals + 1
+                                renewals = job_ads.renewals + 1
                             """
                         ),
                         param_dict,
