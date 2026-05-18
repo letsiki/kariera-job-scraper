@@ -129,6 +129,52 @@ class DBWriter:
                         param_dict,
                     )
 
+    def upsert_jobs(self, jobs):
+        """Unconditional INSERT...ON CONFLICT for sources whose feeds are
+        not date-ordered (RemoteOK, WWR). Differs from `insert_job_ads`:
+          - no `date_posted > last_update` pre-filter,
+          - per-job `date_updated` = NOW() on insert, bumped on conflict,
+          - `source` column persisted,
+          - `report` carries through from the ingestor (kariera sets it
+            False so ads land in daily-urls.md; remote ingestors set it
+            True so they skip the kariera daily digest).
+        """
+        if not jobs:
+            return
+        now = datetime.utcnow()
+        with self._engine.begin() as conn:
+            for job_ad in jobs:
+                param_dict = dict(**job_ad.model_dump())
+                if param_dict.get("date_updated") is None:
+                    param_dict["date_updated"] = now
+                conn.execute(
+                    text(
+                        f"""
+                        INSERT INTO {POSTGRES_TABLE} (
+                            role, company, location, min_experience, employment_type, category, remote, details, tags, ad_link, date_posted, date_updated, report, source
+                        )
+                        VALUES (
+                            :role, :company, :location, :min_experience, :employment_type, :category, :remote, :details, :tags, :ad_link, :date_posted, :date_updated, :report, :source
+                        )
+                        ON CONFLICT (ad_link) DO UPDATE SET
+                            role = EXCLUDED.role,
+                            company = EXCLUDED.company,
+                            location = EXCLUDED.location,
+                            min_experience = EXCLUDED.min_experience,
+                            employment_type = EXCLUDED.employment_type,
+                            category = EXCLUDED.category,
+                            remote = EXCLUDED.remote,
+                            details = EXCLUDED.details,
+                            tags = EXCLUDED.tags,
+                            date_posted = EXCLUDED.date_posted,
+                            date_updated = EXCLUDED.date_updated,
+                            source = EXCLUDED.source,
+                            renewals = job_ads.renewals + 1
+                        """
+                    ),
+                    param_dict,
+                )
+
     def to_markdown(
         self,
         filtered_only: bool,

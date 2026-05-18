@@ -26,3 +26,8 @@ CREATE INDEX IF NOT EXISTS idx_job_ads_report_false ON job_ads (report) WHERE re
 -- Belt-and-suspenders for older DBs that may have been created without
 -- the renewals column (now folded into the main CREATE above).
 ALTER TABLE job_ads ADD COLUMN IF NOT EXISTS renewals SMALLINT DEFAULT 0;
+
+-- Source of the ad. 'kariera' for the Playwright kariera.gr scraper,
+-- 'remoteok' / 'wwr' for the remote-jobs aggregator. Default keeps
+-- existing rows correct without a backfill UPDATE.
+ALTER TABLE job_ads ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'kariera';

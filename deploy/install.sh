@@ -122,8 +122,11 @@ sudo -u postgres psql -d "$PG_DB" -c "ALTER TABLE job_ads OWNER TO $PG_USER; GRA
 echo "==> installing systemd unit + timer"
 install -m 0644 "$APP_HOME/deploy/scraper.service" /etc/systemd/system/kariera-scraper.service
 install -m 0644 "$APP_HOME/deploy/scraper.timer"   /etc/systemd/system/kariera-scraper.timer
+install -m 0644 "$APP_HOME/deploy/remote-aggregator.service" /etc/systemd/system/remote-aggregator.service
+install -m 0644 "$APP_HOME/deploy/remote-aggregator.timer"   /etc/systemd/system/remote-aggregator.timer
 systemctl daemon-reload
 systemctl enable kariera-scraper.timer >/dev/null
+systemctl enable remote-aggregator.timer >/dev/null
 
 echo ""
 echo "===================================================================="
@@ -134,7 +137,9 @@ echo "       POSTGRES_USER=$PG_USER"
 echo "       POSTGRES_PASSWORD=...  # use the value printed above"
 echo "       POSTGRES_DB=$PG_DB"
 echo "     chown $APP_USER:$APP_USER \$_/.env && chmod 600 \$_/.env"
-echo "  2) sudo systemctl start kariera-scraper.timer"
-echo "  3) verify with: systemctl list-timers | grep kariera"
-echo "  4) optional one-off run: sudo systemctl start kariera-scraper.service"
+echo "  2) sudo systemctl start kariera-scraper.timer remote-aggregator.timer"
+echo "  3) verify with: systemctl list-timers | grep -E 'kariera|remote-aggregator'"
+echo "  4) optional one-off run:"
+echo "       sudo systemctl start kariera-scraper.service"
+echo "       sudo systemctl start remote-aggregator.service"
 echo "===================================================================="

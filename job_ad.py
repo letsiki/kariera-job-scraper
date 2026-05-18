@@ -27,6 +27,7 @@ class JobAd(BaseModel):
     renewals: int = (
         0  # Default 0 is needed here because it is not passed
     )
+    source: str = "kariera"  # 'kariera' | 'remoteok' | 'wwr'
 
     class Config:
         validate_assignment = True

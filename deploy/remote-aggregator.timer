@@ -1,0 +1,13 @@
+[Unit]
+Description=Run remote-jobs aggregator daily
+
+[Timer]
+# 02:30 Athens time — offset from kariera-scraper (04:00) to avoid both
+# competing for the same 1GB VM at once.
+OnCalendar=*-*-* 02:30:00 Europe/Athens
+Persistent=true
+RandomizedDelaySec=5min
+Unit=remote-aggregator.service
+
+[Install]
+WantedBy=timers.target

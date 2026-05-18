@@ -1,0 +1,24 @@
+[Unit]
+Description=Remote-jobs aggregator (RemoteOK + WeWorkRemotely)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kariera
+Group=kariera
+WorkingDirectory=/opt/kariera-job-scraper
+EnvironmentFile=/opt/kariera-job-scraper/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/kariera-job-scraper/.venv/bin/python -m sources.aggregator
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=15min
+
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+ReadWritePaths=/opt/kariera-job-scraper/data /opt/kariera-job-scraper/log
+
+[Install]
+WantedBy=multi-user.target
