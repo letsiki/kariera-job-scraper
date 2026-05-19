@@ -1,13 +1,14 @@
 """Workable per-company widget ingestor (Greek companies).
 
-API: GET https://apply.workable.com/api/v1/widget/accounts/{slug}
-returns {"name": ..., "jobs": [...]}. Each job has title, shortcode,
-url, country, city, telecommuting, department, employment_type,
-published_on, created_at — but no description in the listing.
-
-We intentionally do NOT call the per-job detail endpoint; the description
-backfill can happen later if the consumer asks for it. The listing has
-enough signal for tag-matching and dedup.
+API:
+- Listing: GET https://apply.workable.com/api/v1/widget/accounts/{slug}
+  returns {"name": ..., "jobs": [...]}. Each job has title, shortcode,
+  url, country, city, telecommuting, department, employment_type,
+  published_on, created_at — but no description.
+- Per-job markdown: GET https://apply.workable.com/{slug}/jobs/view/{shortcode}.md
+  returns a Workable-rendered Markdown view of the posting. We strip
+  the header lines (title/byline/workplace/department) and keep the
+  body paragraphs as `details`. One extra HTTP call per filtered job.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from sources.common import (
 logger = logging.getLogger(__name__)
 
 WIDGET_URL = "https://apply.workable.com/api/v1/widget/accounts/{slug}"
+JOB_MD_URL = "https://apply.workable.com/{slug}/jobs/view/{shortcode}.md"
 USER_AGENT = "career-copilot/1.0 (letsiki@gmail.com)"
 
 # Verified live on 2026-05-19. See
@@ -56,6 +58,51 @@ def _http_get_json(url: str) -> dict:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def _http_get_text(url: str) -> str:
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return resp.read().decode("utf-8", errors="replace")
+
+
+def _md_to_details(md: str) -> list[str]:
+    """Flatten the Workable .md view into a list of paragraph lines.
+
+    The Workable export starts with a title (# ...), a byline (> ...),
+    and a few ``**Key:** value`` lines. The actual body begins at the
+    first ``## `` heading. We keep non-empty lines from there on,
+    dropping the section headings themselves."""
+    if not md:
+        return []
+    lines = md.splitlines()
+    out: list[str] = []
+    in_body = False
+    for line in lines:
+        s = line.strip()
+        if not in_body:
+            if s.startswith("## "):
+                in_body = True
+            continue
+        if not s:
+            continue
+        if s.startswith("## "):
+            # Section header — skip the literal heading, keep going.
+            continue
+        out.append(s)
+    return out
+
+
+def _fetch_details(slug: str, shortcode: str) -> list[str]:
+    if not shortcode:
+        return []
+    try:
+        md = _http_get_text(JOB_MD_URL.format(slug=slug, shortcode=shortcode))
+    except Exception:
+        logger.warning("workable_gr: detail fetch failed for %s/%s",
+                       slug, shortcode, exc_info=True)
+        return []
+    return _md_to_details(md)
 
 
 def _parse_when(raw: dict) -> datetime:
@@ -106,7 +153,7 @@ def _to_job_ad(raw: dict, company_name: str) -> JobAd | None:
         employment_type=employment_type,
         category="IT",
         remote="Remote" if raw.get("telecommuting") else "On-site",
-        details=[],  # widget listing has no description; backfill later if needed
+        details=[],  # filled in by _fetch_company via _fetch_details
         tags=tags,
         ad_link=url[:255],
         date_posted=_parse_when(raw),
@@ -129,8 +176,11 @@ def _fetch_company(slug: str) -> list[JobAd]:
         except Exception:
             logger.exception("workable_gr: failed to normalize a job for %s", slug)
             continue
-        if ad is not None:
-            out.append(ad)
+        if ad is None:
+            continue
+        # Detail fetch is per-job; only happens for ads that passed has_tech_tag.
+        ad.details = _fetch_details(slug, (raw.get("shortcode") or "").strip())
+        out.append(ad)
     return out
 
 
