@@ -14,7 +14,7 @@ import logging
 from datetime import datetime
 
 from logging_setup import logging_setup
-from sources import remoteok, weworkremotely
+from sources import arbeitnow, jobicy, remoteok, remotive, themuse, weworkremotely, workable_gr
 from write_to_db import DBWriter
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,15 @@ def gather():
     conflicts; ordering reflects RemoteOK-first, WWR-second priority."""
     seen: set[str] = set()
     out = []
-    for src in (remoteok.fetch(), weworkremotely.fetch()):
+    for src in (
+        remoteok.fetch(),
+        weworkremotely.fetch(),
+        arbeitnow.fetch(),
+        remotive.fetch(),
+        jobicy.fetch(),
+        themuse.fetch(),
+        workable_gr.fetch(),
+    ):
         for ad in src:
             if ad.ad_link in seen:
                 continue
