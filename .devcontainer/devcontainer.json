@@ -14,7 +14,8 @@
   "containerEnv": {
     "PATH": "/home/claude/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     "NPM_CONFIG_PREFIX": "/home/claude/.npm-global",
-    "PLAYWRIGHT_BROWSERS_PATH": "/ms-playwright"
+    "PLAYWRIGHT_BROWSERS_PATH": "/ms-playwright",
+    "HOST_WORKSPACE_FOLDER": "${localWorkspaceFolder}"
   },
 
   "runArgs": ["--network=bridge"],
@@ -34,5 +35,5 @@
     }
   },
 
-  "postStartCommand": "sudo chown -R claude:claude /home/claude/.npm-global && if [ ! -f /home/claude/.npm-global/bin/claude ]; then npm install -g @anthropic-ai/claude-code; fi && sudo rm -f /usr/bin/claude && touch /home/claude/.claude/claude.json && ln -sfn /home/claude/.claude/claude.json /home/claude/.claude.json && pip install --user --break-system-packages -e /kjs"
+  "postStartCommand": "sudo chown -R claude:claude /home/claude/.npm-global && if [ ! -f /home/claude/.npm-global/bin/claude ]; then npm install -g @anthropic-ai/claude-code; fi && sudo rm -f /usr/bin/claude && touch /home/claude/.claude/claude.json && ln -sfn /home/claude/.claude/claude.json /home/claude/.claude.json && if [ -n \"$HOST_WORKSPACE_FOLDER\" ]; then PROJECTS=/home/claude/.claude/projects; HOST_KEY=$(echo \"$HOST_WORKSPACE_FOLDER\" | sed 's/[^a-zA-Z0-9]/-/g'); CONTAINER_KEY=$(echo \"$PWD\" | sed 's/[^a-zA-Z0-9]/-/g'); if [ \"$CONTAINER_KEY\" != \"$HOST_KEY\" ]; then mkdir -p \"$PROJECTS/$HOST_KEY\"; if [ -d \"$PROJECTS/$CONTAINER_KEY\" ] && [ ! -L \"$PROJECTS/$CONTAINER_KEY\" ]; then mv \"$PROJECTS/$CONTAINER_KEY\"/* \"$PROJECTS/$HOST_KEY\"/ 2>/dev/null || true; rmdir \"$PROJECTS/$CONTAINER_KEY\" 2>/dev/null || true; fi; ln -sfn -- \"$HOST_KEY\" \"$PROJECTS/$CONTAINER_KEY\"; fi; fi && pip install --user --break-system-packages -e /kjs"
 }
