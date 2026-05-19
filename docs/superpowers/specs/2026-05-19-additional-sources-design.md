@@ -24,10 +24,11 @@ Add more API-based ingestors covering both axes (Greek market, Europe-remote) an
 4. **themuse** — `https://www.themuse.com/api/public/jobs?page=N` — broader market, paginated.
 5. **workable** — per-company endpoints `https://apply.workable.com/api/v3/accounts/{slug}/jobs` for a hand-curated list of Greek companies known to post there.
 
-### Filtering changes (applies to ALL ingestors, new and existing)
+### Filtering
 
-- **Drop `has_tech_tag` gate** — the consumer will filter relevance.
-- **Keep `is_us_only` gate** — US-only ads are zero-value for an Athens user; no reason to bloat the DB with them.
+- **Keep `has_tech_tag` gate** — cheap heuristic that keeps the DB focused on tech roles. New sources apply it the same way existing ingestors do.
+- **Keep `is_us_only` gate** — US-only ads are zero-value for an Athens user.
+- Anything beyond those two gates (seniority match, location preference, role match against profile) is the consumer's job.
 - `infer_min_experience` and other normalization helpers stay as-is.
 
 ### Out of scope
@@ -67,25 +68,52 @@ Each module follows the existing template (see `sources/remoteok.py`):
 
 Unlike the other four, Workable requires a curated company-slug list. Structure:
 
-- `sources/workable_gr.py` — module with a top-level `COMPANIES: tuple[str, ...]` of Workable account slugs for Greek companies.
-- Initial seed list (to be refined; user can edit freely): `beat-app`, `skroutz`, `blueground`, `viva-wallet`, `persado`, `workable`, `pollfish`, `causaly`, `intelligencia`, `helvia`, `softomotive`.
-- `fetch()` iterates `COMPANIES`, calls each endpoint, normalizes results, applies the same `is_us_only` filter (mostly a no-op here; these companies post GR/EU roles).
+- `sources/workable_gr.py` — module with a top-level `COMPANIES: tuple[str, ...]` of Workable account slugs for Greek companies (or companies with significant Athens engineering presence).
+- **Endpoint:** `https://apply.workable.com/api/v1/widget/accounts/{slug}` — public, no auth. Returns `{name, description, jobs: [...]}` where each job has `title, shortcode, url, country, city, telecommuting, department, employment_type, published_on, created_at`. (The `/api/v3/accounts/{slug}/jobs` path commonly cited online returns 404; only `v1/widget` works.)
+- **Per-job detail:** the widget listing omits `description`. For the full text, a second call to `https://apply.workable.com/api/v1/widget/accounts/{slug}/jobs/{shortcode}` is needed. Acceptable to fetch lazily per job (the list is short — only a handful of new jobs per company per run after across-run dedup).
+- `fetch()` iterates `COMPANIES`, calls each endpoint, normalizes results, applies the same `has_tech_tag` + `is_us_only` filters.
 - Per-company errors logged and skipped — one 404 doesn't kill the run.
 - Slug list lives in code (not config) for now; trivially movable to a CSV later if it grows.
+
+**Verified slug list** (all confirmed live via the widget API on 2026-05-19; "(N)" = open jobs at verification time, "(empty)" = valid but no current openings):
+
+```python
+COMPANIES: tuple[str, ...] = (
+    # High activity
+    "blueground",                # (33)
+    "orfium",                    # (21)
+    "learnworlds",               # (18)
+    "skroutz",                   # (18)
+    "upstream",                  # (15)
+    "welcomepickups",            # (15) — note: "welcome-pickups" is also valid, empty
+    "volton",                    # (10)
+    "d-one",                     # (6)
+    "careers",                   # (6) — this is Workable itself
+    "epignosis",                 # (5)
+    "schoox",                    # (5)
+    "persado",                   # (4)
+    "athens-technology-center-1",# (4)
+    # Valid slug, currently no open jobs
+    "beat", "taxibeat", "viva-wallet", "pollfish", "causaly",
+    "intelligencia", "softomotive", "efood", "plum", "doctoranytime",
+    "kaizen-gaming", "netcompany", "instashop", "bryq", "eworx",
+    "profile-software", "softone", "hellas-direct", "regate", "moosend",
+    "pendo", "agroknow", "atosgr", "deepsea-technologies", "cosmote",
+    "kpler", "augmenta",
+    # Greek office / Athens hiring but non-GR HQ — keep, downstream consumer can filter
+    "wolt", "accenture-greece", "metlen", "elinoil", "mango", "freshdesk",
+)
+```
+
+Slugs that 404'd during research and were **excluded**: `beat-app`, `workable`, `helvia`, `helvia-ai`. (The correct slug for Workable's own jobs is `careers`; for Beat it's `beat` or `taxibeat`.)
 
 ### Aggregator wiring
 
 `sources/aggregator.py` adds the five new modules to whatever registration mechanism it currently uses. Each contributes its `fetch()` output to the merged list; downstream dedup + DB write logic is untouched.
 
-### Filtering changes — concrete
+### Filtering — concrete
 
-In `sources/common.py`:
-
-- `has_tech_tag` stays defined (no breakage), but no ingestor calls it anymore.
-- All five new modules omit the `has_tech_tag` check.
-- `sources/remoteok.py` and `sources/weworkremotely.py` are edited to remove their existing `has_tech_tag` calls.
-
-This is a one-line removal in each existing ingestor.
+All five new modules apply `has_tech_tag(title, tags)` and `is_us_only(location)` exactly as `remoteok.py` does today. No changes to existing ingestors or to `common.py`.
 
 ## Output contract
 
@@ -114,6 +142,6 @@ The consumer remains source-agnostic.
 
 ## Risks
 
-- **DB bloat from dropping `has_tech_tag`.** Expected ~5-10x increase in daily inserts. Acceptable per user direction.
 - **Workable slug list rot.** Companies change names / stop using Workable. Mitigation: per-company error tolerance + occasional manual review.
 - **API surface changes.** Free JSON APIs can disappear / rate-limit. Mitigation: per-source error isolation; loss of one source degrades gracefully.
+- **`has_tech_tag` over-filtering on themuse / workable.** themuse and workable both span non-tech roles; the tag set in `common.py` may need topping up if relevant tech roles slip through. Treat as tunable after first run.
